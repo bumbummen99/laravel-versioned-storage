@@ -1,12 +1,12 @@
 <?php
 
-namespace VendorName\Skeleton\Commands;
+namespace SkyRaptor\LaravelVersionedStorage\Commands;
 
 use Illuminate\Console\Command;
 
-class SkeletonCommand extends Command
+class LaravelVersionedStorageCommand extends Command
 {
-    public $signature = 'skeleton';
+    public $signature = 'laravel-versioned-storage';
 
     public $description = 'My command';
 

@@ -1,17 +1,17 @@
 {
-    "name": ":vendor_slug/:package_slug",
-    "description": ":package_description",
+    "name": "skyraptor/laravel-versioned-storage",
+    "description": "Providing a safe way to write one or many files using Laravel's Storage without interfering with another context.",
     "keywords": [
-        ":vendor_name",
+        "SkyRaptor",
         "laravel",
-        ":package_slug"
+        "laravel-versioned-storage"
     ],
-    "homepage": "https://github.com/:vendor_slug/:package_slug",
+    "homepage": "https://github.com/skyraptor/laravel-versioned-storage",
     "license": "MIT",
     "authors": [
         {
-            "name": ":author_name",
-            "email": "author@domain.com",
+            "name": "Patrick Henninger",
+            "email": "privat@skyraptor.eu",
             "role": "Developer"
         }
     ],
@@ -30,18 +30,17 @@
         "pestphp/pest-plugin-laravel": "^4.0",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan-deprecation-rules": "^2.0",
-        "phpstan/phpstan-phpunit": "^2.0",
-        "spatie/laravel-ray": "^1.35"
+        "phpstan/phpstan-phpunit": "^2.0"
     },
     "autoload": {
         "psr-4": {
-            "VendorName\\Skeleton\\": "src/",
-            "VendorName\\Skeleton\\Database\\Factories\\": "database/factories/"
+            "SkyRaptor\\LaravelVersionedStorage\\": "src/",
+            "SkyRaptor\\LaravelVersionedStorage\\Database\\Factories\\": "database/factories/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "VendorName\\Skeleton\\Tests\\": "tests/",
+            "SkyRaptor\\LaravelVersionedStorage\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/"
         }
     },
@@ -63,10 +62,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "VendorName\\Skeleton\\SkeletonServiceProvider"
+                "SkyRaptor\\LaravelVersionedStorage\\LaravelVersionedStorageServiceProvider"
             ],
             "aliases": {
-                "Skeleton": "VendorName\\Skeleton\\Facades\\Skeleton"
+                "LaravelVersionedStorage": "SkyRaptor\\LaravelVersionedStorage\\Facades\\LaravelVersionedStorage"
             }
         }
     },
