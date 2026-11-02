@@ -54,6 +54,8 @@ Files use `<path>/<version>`; directory children use `<directory>/<version>/<chi
 
 Paths remain relative to the selected disk's configured prefix, including Laravel scoped disks; do not prepend that prefix again when calling the package.
 
+Snapshot copy/move operations follow Laravel's visibility configuration, including disabled visibility retention for Cloudflare R2 endpoints.
+
 `put()` accepts strings, streams, and Laravel `File`/`UploadedFile` objects. Uploaded files are streamed into the exact version filename.
 
 ### 4. Coordinate cleanup and transactions

@@ -101,6 +101,8 @@ Directory files are stored at `reports/monthly/<version>/summary.txt` and `repor
 
 All storage paths are relative to the selected disk's configured prefix, including Laravel scoped disks. For example, a disk prefixed with `tenants/acme` stores the snapshot at `tenants/acme/reports/monthly/<version>/...` beneath its root. Reads, writes, cleanup, and rollback use that same prefix.
 
+Snapshot copy and move operations preserve Laravel's visibility configuration, including its `retain_visibility=false` setting for Cloudflare R2 endpoints.
+
 Registered resource roots on the same disk must not be nested. For example, after registering `reports/monthly`, registering `reports` or `reports/monthly/other` throws an `InvalidArgumentException` before writing or invoking a callback. Sibling roots such as `reports/daily` remain valid. UUIDs in logical paths are allowed, and files and subdirectories inside a directory callback are unrestricted by this ownership rule. The existing distinction between file and directory resources at the exact same root is preserved.
 
 The scoped filesystem preserves the selected disk's public and temporary download URL behavior, including custom URL builders. URLs target that specific snapshot; external URL requests do not acquire the package's read locks and can fail after cleanup removes the version. Temporary upload URLs are explicitly unsupported: `providesTemporaryUploadUrls()` returns `false`, and `temporaryUploadUrl()` throws a `RuntimeException`, even if the disk supports them or a custom upload URL builder is configured. All snapshot contents must be written before the callback returns; deferred uploads would allow writes after publication.

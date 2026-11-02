@@ -22,6 +22,11 @@ class VersionedFilesystem extends FilesystemAdapter
         $config['prefix'] = trim(($config['prefix'] ?? '').'/'.$prefix, '/');
         $adapter = new PathPrefixedAdapter($filesystem->getAdapter(), $config['prefix']);
 
+        // Match Laravel's derived configuration for R2-compatible disks.
+        if (str_contains($config['endpoint'] ?? '', 'r2.cloudflarestorage.com')) {
+            $config['retain_visibility'] = false;
+        }
+
         parent::__construct(new Filesystem($adapter, $config), $adapter, $config);
     }
 
