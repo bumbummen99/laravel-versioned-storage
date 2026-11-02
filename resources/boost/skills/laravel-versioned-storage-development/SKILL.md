@@ -64,6 +64,7 @@ Files use `<path>/<version>`; directory children use `<directory>/<version>/<chi
 - Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
 - Metadata reads use the primary database, not read replicas. Handlers and deferred transaction work retain their originally resolved filesystem instance.
 - First registrations reserve roots under a per-disk database lock; failed writes can leave an empty reservation. Outer transactions retain registration locks until they finish.
+- Duplicate version UUIDs and occupied destination paths fail before writes. Committed UUID reservations survive cleanup and failed writes; outer rollbacks undo uncommitted reservations. Publish/run the reservations migration with package writers paused when upgrading.
 - Legacy resources inside physical version directories block destructive cleanup with an explicit error and retain retry records; resolve the ownership conflict before retrying.
 
 ## Rules, References, and Templates

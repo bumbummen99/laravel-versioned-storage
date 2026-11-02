@@ -93,6 +93,20 @@ class VersionedStorageHandler
         $this->registerResource();
         $version = (string) Str::uuid();
 
+        $reserve = function () use ($version): void {
+            $this->connection()->table('versioned_storage_reservations')->insert(['version' => $version]);
+        };
+
+        if ($this->connection()->transactionLevel() > 0) {
+            $this->transaction($reserve);
+        } else {
+            $reserve();
+        }
+
+        if ($this->diskFilesystem->exists($this->path.'/'.$version)) {
+            throw new RuntimeException("Version path [{$this->path}/{$version}] already exists.");
+        }
+
         try {
             $filesystem = $this->filesystem($version);
 

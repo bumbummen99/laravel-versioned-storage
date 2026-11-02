@@ -111,6 +111,10 @@ Writes complete before the current-version pointer is changed in a database tran
 
 Resource roots are reserved before staging files. First registrations are serialized per disk using a database lock so concurrent writers cannot register overlapping roots. A failed write can leave an empty resource reservation with no current version; it is not a published snapshot. Inside an outer application transaction, registration locks remain held until that transaction finishes.
 
+Version UUIDs are reserved atomically in the metadata database before touching their filesystem paths. A duplicate UUID raises an exception without invoking the write callback or modifying the existing snapshot; it is not automatically retried. An already occupied destination path is also rejected without deleting its contents. Committed UUID reservations are retained after failed writes and cleanup so retired identifiers cannot be reused. Reservations made inside an outer transaction follow that transaction's rollback.
+
+Existing installations must publish and run the new reservations migration before using this behavior; pause package writers during the upgrade. The migration reserves all versions already present in the metadata tables. Previously deleted version identifiers cannot be recovered or backfilled.
+
 Cleanup runs after publication commits. If deleting an old version fails, an exception is raised but the new version remains current. Old versions are marked for deletion transactionally and hidden from public reads/lists; their database records are retained until physical deletion succeeds. Cleanup continues attempting other deletions when one fails. A subsequent write retries pending deletions, or you can retry without creating a new version:
 
 ```php

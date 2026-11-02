@@ -187,9 +187,11 @@ it('uses the configured metadata connection for migrations and operations', func
     $migration = require __DIR__.'/../../database/migrations/2026_01_01_000000_create_versioned_storage_tables.php';
     $cleanupMigration = require __DIR__.'/../../database/migrations/2026_01_01_000001_add_pending_delete_to_versioned_storage_versions.php';
     $disksMigration = require __DIR__.'/../../database/migrations/2026_01_01_000002_create_versioned_storage_disks_table.php';
+    $reservationsMigration = require __DIR__.'/../../database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php';
     $migration->up();
     $cleanupMigration->up();
     $disksMigration->up();
+    $reservationsMigration->up();
 
     try {
         $version = VersionedStorage::put('connection', 'contents');
@@ -197,6 +199,7 @@ it('uses the configured metadata connection for migrations and operations', func
             ->and(DB::connection('metadata')->table('versioned_storage_versions')->value('version'))->toBe($version)
             ->and(DB::connection('testing')->table('versioned_storage_versions')->count())->toBe(0);
     } finally {
+        $reservationsMigration->down();
         $disksMigration->down();
         $cleanupMigration->down();
         $migration->down();
