@@ -308,21 +308,27 @@ class VersionedStorageHandler
      */
     private function transaction(Closure $callback, int $attempts = 1): mixed
     {
-        try {
-            return $this->connection()->transaction($callback, $attempts);
-        } catch (Throwable $exception) {
-            $connection = $this->connection();
+        $connection = $this->connection();
+        $initialLevel = $connection->transactionLevel();
 
-            // Laravel can decrement its counter without rolling back a failed commit.
-            if ($connection->transactionLevel() === 0 && $connection->getPdo()->inTransaction()) {
-                try {
+        try {
+            return $connection->transaction($callback, $attempts);
+        } catch (Throwable $exception) {
+            try {
+                // Beginning listeners can throw after the transaction or savepoint opens.
+                if ($connection->transactionLevel() > $initialLevel) {
+                    $connection->rollBack($initialLevel);
+                }
+
+                // Laravel can decrement its counter without rolling back a failed commit.
+                if ($connection->transactionLevel() === 0 && $connection->getPdo()->inTransaction()) {
                     $connection->getPdo()->rollBack();
                     app(VersionedStorageTransactions::class)->rolledBack(new TransactionRolledBack($connection));
-                } catch (Throwable $recoveryException) {
-                    report($exception);
-
-                    throw $recoveryException;
                 }
+            } catch (Throwable $recoveryException) {
+                report($exception);
+
+                throw $recoveryException;
             }
 
             throw $exception;

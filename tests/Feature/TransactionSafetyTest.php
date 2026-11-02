@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Database\Events\TransactionCommitting;
 use Illuminate\Filesystem\FilesystemAdapter;
@@ -189,6 +190,61 @@ it('restores transaction state and removes staged files when a before commit lis
             'files' => ["precommit-failure/{$first}"],
         ]);
 });
+
+it('restores the original transaction depth when a transaction beginning listener throws', function (bool $outerTransaction, string $operation) {
+    $connection = DB::connection();
+    $first = VersionedStorage::put('beginning-failure', 'original');
+    $outerVersion = null;
+
+    if ($outerTransaction) {
+        $connection->beginTransaction();
+        $outerVersion = VersionedStorage::put('outer-work', 'uncommitted contents');
+    }
+
+    $initialLevel = $connection->transactionLevel();
+    Event::listen(TransactionBeginning::class, function (): void {
+        throw new RuntimeException('beginning listener failed');
+    });
+
+    try {
+        expect(fn () => match ($operation) {
+            'read' => VersionedStorage::get('beginning-failure'),
+            'exists' => VersionedStorage::exists('beginning-failure'),
+            'write' => VersionedStorage::put('beginning-failure', 'unpublished', true),
+        })->toThrow(RuntimeException::class, 'beginning listener failed');
+
+        $state = [
+            'level' => $connection->transactionLevel(),
+            'pdo_in_transaction' => $connection->getPdo()->inTransaction(),
+        ];
+    } finally {
+        Event::forget(TransactionBeginning::class);
+
+        if ($connection->transactionLevel() > $initialLevel) {
+            $connection->rollBack($initialLevel);
+        }
+    }
+
+    try {
+        expect($state)->toBe([
+            'level' => $initialLevel,
+            'pdo_in_transaction' => $outerTransaction,
+        ]);
+        expect(VersionedStorage::versions('beginning-failure'))->toBe([$first])
+            ->and(VersionedStorage::get('beginning-failure'))->toBe('original')
+            ->and(Storage::disk('local')->allFiles('beginning-failure'))->toBe(["beginning-failure/{$first}"]);
+
+        if ($outerTransaction) {
+            expect(VersionedStorage::get('outer-work', $outerVersion))->toBe('uncommitted contents');
+            $connection->commit();
+            expect(VersionedStorage::get('outer-work', $outerVersion))->toBe('uncommitted contents');
+        }
+    } finally {
+        if ($connection->transactionLevel() > 0) {
+            $connection->rollBack(0);
+        }
+    }
+})->with([false, true])->with(['read', 'exists', 'write']);
 
 it('retains failed cleanup records and can retry cleanup without publishing again', function () {
     $first = VersionedStorage::put('retry', 'original');

@@ -134,6 +134,8 @@ Writes inside Laravel-managed transactions on the metadata connection are suppor
 
 On Laravel versions with after-rollback callbacks, the package registers its rollback hook when the transaction begins, before application callbacks can throw and prevent the rollback event. If a failed package-managed commit leaves PDO in a transaction despite Laravel reporting transaction level zero, the package rolls back that transaction before deciding whether publication succeeded.
 
+If a transaction-beginning listener throws during a package operation, the newly opened transaction or savepoint is rolled back to the operation's entry depth. An existing outer transaction and its earlier writes are preserved.
+
 `get()` and `exists()` acquire a database resource lock before selecting a version and hold it through the filesystem operation. This protects both current-version and explicit-version reads that acquire the lock before cleanup. A read that starts after the version has been retired still reports it as missing. Each directory child read is protected separately, not as one multi-call read session.
 
 This protection intentionally allows a slow read to delay publication and cleanup of the same resource. Reads are serialized per resource; SQLite uses its database-wide write lock because it does not support row locks. Inside an existing application transaction, locks remain held until that transaction finishes, so keep transactions short and acquire resources in a consistent order to avoid deadlocks.

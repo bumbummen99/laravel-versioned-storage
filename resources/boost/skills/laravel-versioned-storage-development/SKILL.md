@@ -59,6 +59,7 @@ Files use `<path>/<version>`; directory children use `<directory>/<version>/<chi
 - Pass `cleanup: true` to retire previous versions. Failed deletions keep durable retry records; the new version remains current.
 - Run or schedule `php artisan laravel-versioned-storage:cleanup` to retry pending deletions across resources. It fails explicitly if any deletion still fails.
 - Laravel-managed outer transactions defer cleanup until the outermost commit. Rollback removes staged versions and preserves the previous version.
+- A failing transaction-beginning listener rolls back only the package operation's newly opened transaction or savepoint, preserving existing outer transaction work.
 - Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Cleanup waits for active reads; already retired versions are unavailable to new reads.
 - Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
 - Metadata reads use the primary database, not read replicas. Handlers and deferred transaction work retain their originally resolved filesystem instance.
