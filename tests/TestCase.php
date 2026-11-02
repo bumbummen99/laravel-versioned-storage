@@ -1,38 +1,18 @@
 <?php
 
-namespace SkyRaptor\LaravelVersionedStorage\Tests;
+declare(strict_types=1);
 
-use Illuminate\Database\Eloquent\Factories\Factory;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+namespace LaravelVersionedStorage\VersionedStorage\Tests;
+
+use LaravelVersionedStorage\VersionedStorage\VersionedStorageServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
-use SkyRaptor\LaravelVersionedStorage\LaravelVersionedStorageServiceProvider;
 
-class TestCase extends Orchestra
+abstract class TestCase extends Orchestra
 {
-    use RefreshDatabase;
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        Factory::guessFactoryNamesUsing(
-            fn(string $modelName) => 'SkyRaptor\\LaravelVersionedStorage\\Database\\Factories\\' . class_basename($modelName) . 'Factory'
-        );
-    }
-
-    protected function getPackageProviders($app)
+    protected function getPackageProviders($app): array
     {
         return [
-            LaravelVersionedStorageServiceProvider::class,
+            VersionedStorageServiceProvider::class,
         ];
-    }
-
-    public function getEnvironmentSetUp($app)
-    {
-        config()->set('database.default', 'testing');
-
-        // foreach (\Illuminate\Support\Facades\File::allFiles(__DIR__ . '/../database/migrations') as $migration) {
-        //     (include $migration->getRealPath())->up();
-        // }
     }
 }

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 $files = [
@@ -24,12 +26,12 @@ $create = function ($directory, $cleanup = false) use ($files) {
     foreach ($files as $i => $file) {
         // Check the file
         expect(
-            VersionedStorage::directory($directory)->exists($file)
+            VersionedStorage::directory($directory)->exists($file),
         )->toBeTrue();
 
         // Verify the contents
         expect(
-            VersionedStorage::directory($directory)->get($file)
+            VersionedStorage::directory($directory)->get($file),
         )->toBe("File '{$file}' version {$i}");
     }
 
@@ -41,12 +43,12 @@ $verify = function ($directory, $version = null) use ($files) {
     foreach ($files as $i => $file) {
         // Check the file
         expect(
-            VersionedStorage::directory($directory)->exists($file, $version)
+            VersionedStorage::directory($directory)->exists($file, $version),
         )->toBeTrue();
 
         // Verify the contents
         expect(
-            VersionedStorage::directory($directory)->get($file, $version)
+            VersionedStorage::directory($directory)->get($file, $version),
         )->toBe("File '{$file}' version {$i}");
     }
 };
@@ -85,7 +87,7 @@ it('Can cleanup previous multi file versions', function () use ($create, $files,
             // Previous version
             foreach ($files as $file) {
                 expect(
-                    VersionedStorage::directory($directory)->exists($file, $version)
+                    VersionedStorage::directory($directory)->exists($file, $version),
                 )->toBeFalse();
             }
         } else {
@@ -109,7 +111,7 @@ it('Can list available multi file versions', function () use ($create) {
         VersionedStorage::directory($directory)->versions() as $i => $version
     ) {
         expect(
-            $version
+            $version,
         )->toBe($versions[$i]);
     }
 });

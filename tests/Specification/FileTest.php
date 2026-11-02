@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 /**
@@ -12,12 +14,12 @@ $create = function ($file, $content, $cleanup = false) {
 
     // Check the file
     expect(
-        VersionedStorage::exists($file)
+        VersionedStorage::exists($file),
     )->toBeTrue();
 
     // Verify the contents
     expect(
-        VersionedStorage::get($file)
+        VersionedStorage::get($file),
     )->toBe($content);
 
     return $version;
@@ -30,12 +32,12 @@ $create = function ($file, $content, $cleanup = false) {
 $verify = function ($file, $content, $version = null) {
     // Check the file
     expect(
-        VersionedStorage::exists($file, $version)
+        VersionedStorage::exists($file, $version),
     )->toBeTrue();
 
     // Verify the contents
     expect(
-        VersionedStorage::get($file, $version)
+        VersionedStorage::get($file, $version),
     )->toBe($content);
 };
 
@@ -56,7 +58,7 @@ it('Can handle multiple single file versions', function () use ($create, $verify
 
     // Check & read again to verify all previous versions still exist
     foreach ($versions as $index => $version) {
-        $verify($file, 'File '.($index + 1), $version);
+        $verify($file, 'File ' . ($index + 1), $version);
     }
 });
 
@@ -75,11 +77,11 @@ it('Can cleanup previous single file versions', function () use ($create, $verif
         if ($index < 2) {
             // Previous version
             expect(
-                VersionedStorage::exists($file, $version)
+                VersionedStorage::exists($file, $version),
             )->toBeFalse();
         } else {
             // Current version
-            $verify($file, 'File '.($index + 1), $version);
+            $verify($file, 'File ' . ($index + 1), $version);
         }
     }
 });
@@ -98,7 +100,7 @@ it('Can list available single file versions', function () use ($create) {
         VersionedStorage::versions($file) as $i => $version
     ) {
         expect(
-            $version
+            $version,
         )->toBe($versions[$i]);
     }
 });

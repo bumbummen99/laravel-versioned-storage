@@ -1,9 +1,10 @@
 {
+    "$schema": "https://getcomposer.org/schema.json",
     "name": "skyraptor/laravel-versioned-storage",
-    "description": "Providing a safe way to write one or many files using Laravel's Storage without interfering with another context.",
+    "description": "Versioned, safe storage for Laravel.",
     "keywords": [
-        "SkyRaptor",
         "laravel",
+        "skyraptor",
         "laravel-versioned-storage"
     ],
     "homepage": "https://github.com/skyraptor/laravel-versioned-storage",
@@ -16,41 +17,82 @@
         }
     ],
     "require": {
-        "php": "^8.4",
-        "spatie/laravel-package-tools": "^1.16",
-        "illuminate/contracts": "^11.0||^12.0||^13.0"
+        "php": "^8.3",
+        "illuminate/support": "^12.0||^13.0"
     },
     "require-dev": {
-        "laravel/pint": "^1.14",
-        "nunomaduro/collision": "^8.8",
-        "larastan/larastan": "^3.0",
-        "orchestra/testbench": "^11.0.0||^10.0.0||^9.0.0",
-        "pestphp/pest": "^4.0",
-        "pestphp/pest-plugin-arch": "^4.0",
-        "pestphp/pest-plugin-laravel": "^4.0",
-        "phpstan/extension-installer": "^1.4",
-        "phpstan/phpstan-deprecation-rules": "^2.0",
-        "phpstan/phpstan-phpunit": "^2.0"
+        "larastan/larastan": "^3.9",
+        "laravel/pint": "^1.29",
+        "laravel/pao": "^1.0",
+        "orchestra/testbench": "^10.0||^11.0",
+        "pestphp/pest": "^4.6||^5.0",
+        "pestphp/pest-plugin-laravel": "^4.1||^5.0",
+        "pestphp/pest-plugin-type-coverage": "^4.0||^5.0",
+        "phpstan/extension-installer": "^1.4"
     },
     "autoload": {
         "psr-4": {
-            "SkyRaptor\\LaravelVersionedStorage\\": "src/",
-            "SkyRaptor\\LaravelVersionedStorage\\Database\\Factories\\": "database/factories/"
+            "LaravelVersionedStorage\\VersionedStorage\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "SkyRaptor\\LaravelVersionedStorage\\Tests\\": "tests/",
-            "Workbench\\App\\": "workbench/app/"
+            "LaravelVersionedStorage\\VersionedStorage\\Tests\\": "tests/",
+            "Workbench\\App\\": "workbench/app/",
+            "Workbench\\Database\\Factories\\": "workbench/database/factories/",
+            "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
         }
     },
     "scripts": {
-        "post-autoload-dump": "@composer run prepare",
-        "prepare": "@php vendor/bin/testbench package:discover --ansi",
-        "analyse": "vendor/bin/phpstan analyse",
-        "test": "vendor/bin/pest",
-        "test-coverage": "vendor/bin/pest --coverage",
-        "format": "vendor/bin/pint"
+        "post-autoload-dump": [
+            "@clear",
+            "@prepare"
+        ],
+        "prepare": [
+            "@php vendor/bin/testbench package:discover --ansi"
+        ],
+        "build": [
+            "@php vendor/bin/testbench workbench:build --ansi"
+        ],
+        "serve": [
+            "Composer\\Config::disableProcessTimeout",
+            "@build",
+            "@php vendor/bin/testbench serve --ansi"
+        ],
+        "lint": [
+            "vendor/bin/pint --parallel"
+        ],
+        "lint:check": [
+            "vendor/bin/pint --parallel --test"
+        ],
+        "analyse": [
+            "vendor/bin/phpstan analyse"
+        ],
+        "test:types": [
+            "vendor/bin/pest --type-coverage --min=100"
+        ],
+        "test:unit": [
+            "vendor/bin/pest --parallel"
+        ],
+        "test": [
+            "@analyse",
+            "@lint:check",
+            "@test:types",
+            "@test:unit"
+        ],
+        "clear": [
+            "@php vendor/bin/testbench package:purge-skeleton --ansi"
+        ]
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "LaravelVersionedStorage\\VersionedStorage\\VersionedStorageServiceProvider"
+            ],
+            "aliases": {
+                "VersionedStorage": "LaravelVersionedStorage\\VersionedStorage\\Facades\\VersionedStorage"
+            }
+        }
     },
     "config": {
         "sort-packages": true,
@@ -59,16 +101,6 @@
             "phpstan/extension-installer": true
         }
     },
-    "extra": {
-        "laravel": {
-            "providers": [
-                "SkyRaptor\\LaravelVersionedStorage\\LaravelVersionedStorageServiceProvider"
-            ],
-            "aliases": {
-                "LaravelVersionedStorage": "SkyRaptor\\LaravelVersionedStorage\\Facades\\LaravelVersionedStorage"
-            }
-        }
-    },
-    "minimum-stability": "dev",
+    "minimum-stability": "stable",
     "prefer-stable": true
 }
