@@ -17,10 +17,10 @@ class VersionedFilesystem extends FilesystemAdapter
         private readonly FilesystemAdapter $filesystem,
         private readonly string $prefix,
     ) {
-        $adapter = new PathPrefixedAdapter($filesystem->getAdapter(), $prefix);
         $config = $filesystem->getConfig();
         $config['throw'] = true;
         $config['prefix'] = trim(($config['prefix'] ?? '').'/'.$prefix, '/');
+        $adapter = new PathPrefixedAdapter($filesystem->getAdapter(), $config['prefix']);
 
         parent::__construct(new Filesystem($adapter, $config), $adapter, $config);
     }

@@ -52,6 +52,8 @@ Scoped public and temporary download URLs retain the selected disk's URL behavio
 
 Files use `<path>/<version>`; directory children use `<directory>/<version>/<child>`. Read through this API rather than through `Storage::get($logicalPath)`.
 
+Paths remain relative to the selected disk's configured prefix, including Laravel scoped disks; do not prepend that prefix again when calling the package.
+
 `put()` accepts strings, streams, and Laravel `File`/`UploadedFile` objects. Uploaded files are streamed into the exact version filename.
 
 ### 4. Coordinate cleanup and transactions
