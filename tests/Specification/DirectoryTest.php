@@ -3,14 +3,14 @@
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 /**
- * Creates a new versioned file and verifies that the file 
+ * Creates a new versioned file and verifies that the file
  * exists & has the correct contents at the same time.
  */
 $create = function ($directory, $cleanup = false) {
     $files = [
         'one',
         'two',
-        'three'
+        'three',
     ];
 
     // Write the files
@@ -42,7 +42,7 @@ $verify = function ($directory, $version = null) {
         [
             'one',
             'two',
-            'three'
+            'three',
         ] as $i => $file
     ) {
         // Check the file
@@ -110,8 +110,7 @@ it('Can list available multi file versions', function () use ($create) {
 
     // Verify all previously created versions are listed
     foreach (
-        VersionedStorage::directory($directory)->versions()
-        as $i => $version
+        VersionedStorage::directory($directory)->versions() as $i => $version
     ) {
         expect(
             $version

@@ -10,7 +10,7 @@ return new class extends Migration
 
     public function up()
     {
-        Schema::create(static::TABLE_NAME, function (Blueprint $table) {
+        Schema::create(self::TABLE_NAME, function (Blueprint $table) {
             $table->id();
 
             $table->string('disk');
@@ -26,6 +26,6 @@ return new class extends Migration
 
     public function down()
     {
-        Schema::drop(static::TABLE_NAME);
+        Schema::drop(self::TABLE_NAME);
     }
 };

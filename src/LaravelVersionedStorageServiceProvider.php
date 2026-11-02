@@ -2,9 +2,9 @@
 
 namespace SkyRaptor\LaravelVersionedStorage;
 
+use SkyRaptor\LaravelVersionedStorage\Commands\LaravelVersionedStorageCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use SkyRaptor\LaravelVersionedStorage\Commands\LaravelVersionedStorageCommand;
 
 class LaravelVersionedStorageServiceProvider extends PackageServiceProvider
 {

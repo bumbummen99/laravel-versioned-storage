@@ -3,7 +3,7 @@
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 /**
- * Creates a new versioned file and verifies that the file 
+ * Creates a new versioned file and verifies that the file
  * exists & has the correct contents at the same time.
  */
 $create = function ($file, $content, $cleanup = false) {
@@ -24,7 +24,7 @@ $create = function ($file, $content, $cleanup = false) {
 };
 
 /**
- * Verifies that the provided file (version) does exist 
+ * Verifies that the provided file (version) does exist
  * and has the expected contents.
  */
 $verify = function ($file, $content, $version = null) {
@@ -95,8 +95,7 @@ it('Can list available single file versions', function () use ($create) {
 
     // Verify all previously created versions are listed
     foreach (
-        VersionedStorage::versions($file)
-        as $i => $version
+        VersionedStorage::versions($file) as $i => $version
     ) {
         expect(
             $version
