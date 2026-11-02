@@ -3,7 +3,7 @@
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 /**
- * Creates a new versioned file and verifies that the file 
+ * Creates a new versioned file and verifies that the file
  * exists & has the correct contents at the same time.
  */
 $create = function ($file, $content, $cleanup = false) {
@@ -24,7 +24,7 @@ $create = function ($file, $content, $cleanup = false) {
 };
 
 /**
- * Verifies that the provided file (version) does exist 
+ * Verifies that the provided file (version) does exist
  * and has the expected contents.
  */
 $verify = function ($file, $content, $version = null) {
@@ -39,47 +39,47 @@ $verify = function ($file, $content, $version = null) {
     )->toBe($content);
 };
 
-it('Can handle a single file', function () {
+it('Can handle a single file', function () use ($create) {
     $file = '/foo/bar/baz';
 
     $create($file, 'Hello, World!');
 });
 
-it('Can handle multiple single file versions', function () {
+it('Can handle multiple single file versions', function () use ($create, $verify) {
     $file = '/foo/bar/baz';
     $versions = [];
 
     // Create multiple versions of the same file
-    foreach (range(1, 3) as $i => $file) {
+    foreach (range(1, 3) as $i) {
         $versions[] = $create($file, "File {$i}");
     }
 
     // Check & read again to verify all previous versions still exist
-    foreach (range(1, 3) as $i => $file) {
-        $verify($file, "File {$i}", $versions[$i]);
+    foreach ($versions as $index => $version) {
+        $verify($file, 'File '.($index + 1), $version);
     }
 });
 
-it('Can cleanup previous single file versions', function () {
+it('Can cleanup previous single file versions', function () use ($create, $verify) {
     $file = '/foo/bar/baz';
     $versions = [];
 
     // Create multiple versions of the same file
-    foreach (range(1, 3) as $i => $file) {
+    foreach (range(1, 3) as $i) {
         // Write the file & cleanup previous versions
         $versions[] = $create($file, "File {$i}", true);
     }
 
     // Check & read again to verify all previous versions have been removed
-    foreach (range(1, 3) as $i => $file) {
-        if ($i < 3) {
+    foreach ($versions as $index => $version) {
+        if ($index < 2) {
             // Previous version
             expect(
-                VersionedStorage::exists($file, $versions[$i])
+                VersionedStorage::exists($file, $version)
             )->toBeFalse();
         } else {
             // Current version
-            $verify($file, "File {$i}", $versions[$i]);
+            $verify($file, 'File '.($index + 1), $version);
         }
     }
 });
@@ -89,14 +89,13 @@ it('Can list available single file versions', function () use ($create) {
     $versions = [];
 
     // Create multiple versions of the same file
-    foreach (range(1, 3) as $i => $file) {
+    foreach (range(1, 3) as $i) {
         $versions[] = $create($file, "File {$i}");
     }
 
     // Verify all previously created versions are listed
     foreach (
-        VersionedStorage::versions($file)
-        as $i => $version
+        VersionedStorage::versions($file) as $i => $version
     ) {
         expect(
             $version

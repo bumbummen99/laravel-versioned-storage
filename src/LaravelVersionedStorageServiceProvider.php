@@ -2,9 +2,9 @@
 
 namespace SkyRaptor\LaravelVersionedStorage;
 
+use SkyRaptor\LaravelVersionedStorage\Commands\LaravelVersionedStorageCommand;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
-use SkyRaptor\LaravelVersionedStorage\Commands\LaravelVersionedStorageCommand;
 
 class LaravelVersionedStorageServiceProvider extends PackageServiceProvider
 {
@@ -19,7 +19,8 @@ class LaravelVersionedStorageServiceProvider extends PackageServiceProvider
             ->name('laravel-versioned-storage')
             ->hasConfigFile()
             ->hasViews()
-            ->hasMigration('create_laravel_versioned_storage_table')
+            ->hasMigration('create_versioned_storage_table')
+            ->runsMigrations()
             ->hasCommand(LaravelVersionedStorageCommand::class);
     }
 }

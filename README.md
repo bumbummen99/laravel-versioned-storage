@@ -5,7 +5,7 @@
 [![GitHub Code Style Action Status](https://github.com/spatie/package-laravel-versioned-storage-laravel/actions/workflows/fix-php-code-style-issues.yml/badge.svg)](https://github.com/skyraptor/laravel-versioned-storage/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
 [![Total Downloads](https://img.shields.io/packagist/dt/skyraptor/laravel-versioned-storage.svg?style=flat-square)](https://packagist.org/packages/skyraptor/laravel-versioned-storage)
 
-This is where your description should go. Limit it to a paragraph or two. Consider adding a small example.
+Laravel Versioned Storage writes each file or directory revision to a unique path and stores the current revision in the database. Consumers can continue reading a stable current version while a new version is being written. The database migration must be run before using the package.
 
 ## Support us
 
@@ -36,10 +36,13 @@ You can publish the config file with:
 php artisan vendor:publish --tag="laravel-versioned-storage-config"
 ```
 
-This is the contents of the published config file:
+The optional config file lets you select the filesystem disk, database connection, and metadata table:
 
 ```php
 return [
+    'disk' => null, // Use the application's default filesystem disk.
+    'database' => null, // Use the application's default database connection.
+    'table' => 'versioned_storage_entry',
 ];
 ```
 
@@ -52,9 +55,21 @@ php artisan vendor:publish --tag="laravel-versioned-storage-views"
 ## Usage
 
 ```php
-$laravelVersionedStorage = new SkyRaptor\LaravelVersionedStorage();
-echo $laravelVersionedStorage->echoPhrase('Hello, SkyRaptor!');
+use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+
+$version = VersionedStorage::put('reports/daily.csv', $contents);
+$contents = VersionedStorage::get('reports/daily.csv');
+$oldContents = VersionedStorage::get('reports/daily.csv', $version);
+$versions = VersionedStorage::versions('reports/daily.csv');
+
+$directoryVersion = VersionedStorage::directory('reports/monthly', function ($files) {
+    $files->put('summary.txt', 'Monthly summary');
+});
+
+$summary = VersionedStorage::directory('reports/monthly')->get('summary.txt', $directoryVersion);
 ```
+
+Pass `true` as the cleanup argument to `put` or `directory` to remove previous versions. Without it, earlier versions remain available.
 
 ## Testing
 
