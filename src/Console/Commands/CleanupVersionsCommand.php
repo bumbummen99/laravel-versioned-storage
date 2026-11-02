@@ -19,6 +19,7 @@ class CleanupVersionsCommand extends Command
     {
         $connection = DB::connection(config('laravel-versioned-storage.connection'));
         $resources = $connection->table('versioned_storage_resources')
+            ->useWritePdo()
             ->whereIn('id', $connection->table('versioned_storage_versions')
                 ->select('resource_id')->where('pending_delete', true))
             ->orderBy('id')->cursor();

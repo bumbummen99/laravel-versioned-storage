@@ -26,6 +26,8 @@ class VersionedStorageHandler
 
     private readonly Connection $database;
 
+    private readonly FilesystemAdapter $diskFilesystem;
+
     public function __construct(
         string $path,
         private readonly string $disk,
@@ -39,6 +41,7 @@ class VersionedStorageHandler
 
         $this->key = hash('sha256', $disk."\0".$this->path."\0".($directory ? 'directory' : 'file'));
         $this->database = DB::connection(config('laravel-versioned-storage.connection'));
+        $this->diskFilesystem = Storage::disk($disk);
     }
 
     public function get(string $path, ?string $version = null): string
@@ -125,7 +128,7 @@ class VersionedStorageHandler
     private function filesystem(string $version): FilesystemAdapter
     {
         return new VersionedFilesystem(
-            Storage::disk($this->disk),
+            $this->diskFilesystem,
             $this->directory ? $this->path.'/'.$version : $this->path,
         );
     }
@@ -249,12 +252,12 @@ class VersionedStorageHandler
 
     private function resourceVersions(stdClass $resource): Builder
     {
-        return $this->connection()->table('versioned_storage_versions')->where('resource_id', $resource->id);
+        return $this->connection()->table('versioned_storage_versions')->useWritePdo()->where('resource_id', $resource->id);
     }
 
     private function versionQuery(): Builder
     {
-        return $this->connection()->table('versioned_storage_versions')
+        return $this->connection()->table('versioned_storage_versions')->useWritePdo()
             ->whereIn('resource_id', $this->connection()->table('versioned_storage_resources')
                 ->select('id')->where('key', $this->key));
     }
@@ -266,7 +269,7 @@ class VersionedStorageHandler
 
     private function removeVersion(string $version, ?Throwable $previous = null): void
     {
-        $filesystem = Storage::disk($this->disk);
+        $filesystem = $this->diskFilesystem;
         $path = $this->path.'/'.$version;
         $deleted = $this->directory ? $filesystem->deleteDirectory($path) : $filesystem->delete($path);
 

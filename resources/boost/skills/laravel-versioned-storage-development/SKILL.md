@@ -46,6 +46,8 @@ Use `SkyRaptor\LaravelVersionedStorage\VersionedStorage` or `SkyRaptor\LaravelVe
 
 The directory callback receives a scoped Laravel `FilesystemAdapter`. All files in the new snapshot must be written by that callback; previous files are not copied.
 
+Scoped public and temporary download URLs retain the selected disk's URL behavior and target the specific snapshot. External URL reads are not protected against cleanup. Temporary upload URLs are rejected: `providesTemporaryUploadUrls()` returns `false` and `temporaryUploadUrl()` throws, even with custom upload URL builders. Write all snapshot contents before the callback returns.
+
 Files use `<path>/<version>`; directory children use `<directory>/<version>/<child>`. Read through this API rather than through `Storage::get($logicalPath)`.
 
 `put()` accepts strings, streams, and Laravel `File`/`UploadedFile` objects. Uploaded files are streamed into the exact version filename.
@@ -57,6 +59,7 @@ Files use `<path>/<version>`; directory children use `<directory>/<version>/<chi
 - Laravel-managed outer transactions defer cleanup until the outermost commit. Rollback removes staged versions and preserves the previous version.
 - Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Cleanup waits for active reads; already retired versions are unavailable to new reads.
 - Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
+- Metadata reads use the primary database, not read replicas. Handlers and deferred transaction work retain their originally resolved filesystem instance.
 
 ## Rules, References, and Templates
 
