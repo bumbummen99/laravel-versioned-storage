@@ -15,6 +15,7 @@ use Illuminate\Support\Str;
 use InvalidArgumentException;
 use League\Flysystem\WhitespacePathNormalizer;
 use RuntimeException;
+use stdClass;
 use Throwable;
 
 class VersionedStorageHandler
@@ -22,6 +23,8 @@ class VersionedStorageHandler
     private readonly string $path;
 
     private readonly string $key;
+
+    private readonly Connection $database;
 
     public function __construct(
         string $path,
@@ -35,31 +38,38 @@ class VersionedStorageHandler
         }
 
         $this->key = hash('sha256', $disk."\0".$this->path."\0".($directory ? 'directory' : 'file'));
+        $this->database = DB::connection(config('laravel-versioned-storage.connection'));
     }
 
     public function get(string $path, ?string $version = null): string
     {
-        $version = $this->resolveVersion($version);
+        return $this->connection()->transaction(function () use ($path, $version): string {
+            $resource = $this->lockResource();
+            $selected = $this->resolveVersion($version, $resource);
 
-        if ($version === null) {
-            throw new FileNotFoundException("No matching version exists for [{$this->path}].");
-        }
+            if ($selected === null) {
+                throw new FileNotFoundException("No matching version exists for [{$this->path}].");
+            }
 
-        $contents = $this->filesystem($version)->get($this->directory ? $path : $version);
+            $contents = $this->filesystem($selected)->get($this->directory ? $path : $selected);
 
-        if ($contents === null) {
-            throw new FileNotFoundException("File [{$path}] does not exist in version [{$version}].");
-        }
+            if ($contents === null) {
+                throw new FileNotFoundException("File [{$path}] does not exist in version [{$selected}].");
+            }
 
-        return $contents;
+            return $contents;
+        });
     }
 
     public function exists(string $path, ?string $version = null): bool
     {
-        $version = $this->resolveVersion($version);
+        return $this->connection()->transaction(function () use ($path, $version): bool {
+            $resource = $this->lockResource();
+            $selected = $this->resolveVersion($version, $resource);
 
-        return $version !== null
-            && $this->filesystem($version)->exists($this->directory ? $path : $version);
+            return $selected !== null
+                && $this->filesystem($selected)->exists($this->directory ? $path : $selected);
+        });
     }
 
     /**
@@ -67,7 +77,7 @@ class VersionedStorageHandler
      */
     public function versions(): array
     {
-        return array_values($this->versionQuery()->orderBy('id')->pluck('version')
+        return array_values($this->versionQuery()->where('pending_delete', false)->orderBy('id')->pluck('version')
             ->map(static fn (string $version): string => $version)->all());
     }
 
@@ -86,15 +96,27 @@ class VersionedStorageHandler
             }
 
             $callback($filesystem, $version);
-            $oldVersions = $this->publish($version, $cleanup);
         } catch (Throwable $exception) {
             $this->removeVersion($version, $exception);
 
             throw $exception;
         }
 
-        foreach ($oldVersions as $oldVersion) {
-            $this->removeVersion($oldVersion);
+        try {
+            $this->publish($version, $cleanup);
+        } catch (Throwable $exception) {
+            // A transaction listener may throw after the database has committed.
+            if ($this->versionQuery()->where('version', $version)->exists()) {
+                $this->deferIfTransactional($version);
+            } else {
+                $this->removeVersion($version, $exception);
+            }
+
+            throw $exception;
+        }
+
+        if (! $this->deferIfTransactional($version)) {
+            $this->cleanup();
         }
 
         return $version;
@@ -108,14 +130,11 @@ class VersionedStorageHandler
         );
     }
 
-    /**
-     * @return list<string>
-     */
-    private function publish(string $version, bool $cleanup): array
+    private function publish(string $version, bool $cleanup): void
     {
         $connection = $this->connection();
 
-        return $connection->transaction(function () use ($connection, $version, $cleanup): array {
+        $connection->transaction(function () use ($connection, $version, $cleanup): void {
             // The persistent resource row serializes even concurrent first publications.
             $connection->table('versioned_storage_resources')->insertOrIgnore([
                 'key' => $this->key,
@@ -124,14 +143,11 @@ class VersionedStorageHandler
                 'is_directory' => $this->directory,
             ]);
 
-            $resource = $connection->table('versioned_storage_resources')
-                ->where('key', $this->key)->lockForUpdate()->first();
+            $resource = $this->lockResource();
 
             if ($resource === null) {
                 throw new RuntimeException("Unable to register versioned resource [{$this->path}].");
             }
-
-            $oldVersions = $cleanup ? $this->versions() : [];
 
             $connection->table('versioned_storage_versions')->insert([
                 'resource_id' => $resource->id,
@@ -142,22 +158,98 @@ class VersionedStorageHandler
             $connection->table('versioned_storage_resources')
                 ->where('id', $resource->id)->update(['current_version' => $version]);
 
-            if ($oldVersions !== []) {
-                $this->versionQuery()->whereIn('version', $oldVersions)->delete();
+            if ($cleanup) {
+                $this->resourceVersions($resource)->where('version', '!=', $version)->update(['pending_delete' => true]);
             }
-
-            return $oldVersions;
         }, 5);
     }
 
-    private function resolveVersion(?string $version): ?string
+    public function cleanup(): void
     {
-        if ($version !== null) {
-            return $this->versionQuery()->where('version', $version)->exists() ? $version : null;
+        if ($this->connection()->transactionLevel() > 0) {
+            app(VersionedStorageTransactions::class)->defer($this->connection(), $this);
+
+            return;
         }
 
-        return $this->connection()->table('versioned_storage_resources')
-            ->where('key', $this->key)->value('current_version');
+        $error = null;
+        $pending = $this->versionQuery()->where('pending_delete', true)->pluck('version');
+
+        foreach ($pending as $version) {
+            try {
+                $this->connection()->transaction(function () use ($version): void {
+                    $resource = $this->lockResource();
+
+                    if ($resource === null || $resource->current_version === $version) {
+                        return;
+                    }
+
+                    $record = $this->resourceVersions($resource)->where('version', $version)
+                        ->where('pending_delete', true)->lockForUpdate()->first();
+
+                    if ($record === null) {
+                        return;
+                    }
+
+                    $this->removeVersion($version);
+                    $this->resourceVersions($resource)->where('version', $version)->delete();
+                });
+            } catch (Throwable $exception) {
+                report($exception);
+                $error ??= $exception;
+            }
+        }
+
+        if ($error !== null) {
+            throw $error;
+        }
+    }
+
+    public function discard(string $version): void
+    {
+        if (! $this->versionQuery()->where('version', $version)->exists()) {
+            $this->removeVersion($version);
+        }
+    }
+
+    private function deferIfTransactional(string $version): bool
+    {
+        if ($this->connection()->transactionLevel() === 0) {
+            return false;
+        }
+
+        app(VersionedStorageTransactions::class)->defer($this->connection(), $this, $version);
+
+        return true;
+    }
+
+    private function lockResource(): ?stdClass
+    {
+        $query = $this->connection()->table('versioned_storage_resources')->where('key', $this->key);
+
+        // SQLite ignores FOR UPDATE, so acquire its write lock before reading a snapshot.
+        if ($this->connection()->getDriverName() === 'sqlite') {
+            $query->update(['key' => $this->key]);
+        }
+
+        return $query->lockForUpdate()->first();
+    }
+
+    private function resolveVersion(?string $version, ?stdClass $resource): ?string
+    {
+        if ($resource === null) {
+            return null;
+        }
+
+        $version ??= $resource->current_version;
+
+        return $version !== null && $this->resourceVersions($resource)->where('version', $version)
+            ->where('pending_delete', false)->lockForUpdate()->exists() ? $version : null;
+    }
+
+    private function resourceVersions(stdClass $resource): Builder
+    {
+        return $this->connection()->table('versioned_storage_versions')->where('resource_id', $resource->id);
     }
 
     private function versionQuery(): Builder
@@ -169,7 +261,7 @@ class VersionedStorageHandler
 
     private function connection(): Connection
     {
-        return DB::connection(config('laravel-versioned-storage.connection'));
+        return $this->database;
     }
 
     private function removeVersion(string $version, ?Throwable $previous = null): void

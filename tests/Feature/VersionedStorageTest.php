@@ -184,7 +184,9 @@ it('uses the configured metadata connection for migrations and operations', func
     config()->set('database.connections.metadata', config('database.connections.testing'));
     config()->set('laravel-versioned-storage.connection', 'metadata');
     $migration = require __DIR__.'/../../database/migrations/2026_01_01_000000_create_versioned_storage_tables.php';
+    $cleanupMigration = require __DIR__.'/../../database/migrations/2026_01_01_000001_add_pending_delete_to_versioned_storage_versions.php';
     $migration->up();
+    $cleanupMigration->up();
 
     try {
         $version = VersionedStorage::put('connection', 'contents');
@@ -192,8 +194,10 @@ it('uses the configured metadata connection for migrations and operations', func
             ->and(DB::connection('metadata')->table('versioned_storage_versions')->value('version'))->toBe($version)
             ->and(DB::connection('testing')->table('versioned_storage_versions')->count())->toBe(0);
     } finally {
+        $cleanupMigration->down();
         $migration->down();
         DB::purge('metadata');
+        config()->set('laravel-versioned-storage.connection', null);
     }
 });
 

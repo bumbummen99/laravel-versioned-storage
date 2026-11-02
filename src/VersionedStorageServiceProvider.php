@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace SkyRaptor\LaravelVersionedStorage;
 
+use Illuminate\Database\Events\TransactionCommitted;
+use Illuminate\Database\Events\TransactionRolledBack;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
+use SkyRaptor\LaravelVersionedStorage\Console\Commands\CleanupVersionsCommand;
 use SkyRaptor\LaravelVersionedStorage\Console\Commands\VersionedStorageCommand;
 
 class VersionedStorageServiceProvider extends ServiceProvider
@@ -17,6 +21,7 @@ class VersionedStorageServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/laravel-versioned-storage.php', 'laravel-versioned-storage');
 
         $this->app->singleton(VersionedStorage::class);
+        $this->app->singleton(VersionedStorageTransactions::class);
     }
 
     /**
@@ -24,6 +29,9 @@ class VersionedStorageServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Event::listen(TransactionCommitted::class, [VersionedStorageTransactions::class, 'committed']);
+        Event::listen(TransactionRolledBack::class, [VersionedStorageTransactions::class, 'rolledBack']);
+
         $this->loadRoutesFrom(__DIR__.'/../routes/laravel-versioned-storage.php');
 
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'laravel-versioned-storage');
@@ -56,6 +64,7 @@ class VersionedStorageServiceProvider extends ServiceProvider
 
         $this->commands([
             VersionedStorageCommand::class,
+            CleanupVersionsCommand::class,
         ]);
     }
 }

@@ -40,12 +40,23 @@ Use `SkyRaptor\LaravelVersionedStorage\VersionedStorage` or `SkyRaptor\LaravelVe
 - `get($path, $version = null, $disk = null)` reads the selected or current version.
 - `exists($path, $version = null, $disk = null)` checks a selected or current file.
 - `versions($path, $disk = null)` lists versions oldest first.
+- `cleanup($path, $disk = null)` retries pending file-version deletions without creating a version.
 - `directory($path, $callback, $cleanup = false, $disk = null)` writes a new independent snapshot and returns its version.
-- `directory($path)` returns a handler with `get($file, $version = null)`, `exists($file, $version = null)`, and `versions()`.
+- `directory($path)` returns a handler with `get($file, $version = null)`, `exists($file, $version = null)`, `versions()`, and `cleanup()`.
 
 The directory callback receives a scoped Laravel `FilesystemAdapter`. All files in the new snapshot must be written by that callback; previous files are not copied.
 
 Files use `<path>/<version>`; directory children use `<directory>/<version>/<child>`. Read through this API rather than through `Storage::get($logicalPath)`.
+
+`put()` accepts strings, streams, and Laravel `File`/`UploadedFile` objects. Uploaded files are streamed into the exact version filename.
+
+### 4. Coordinate cleanup and transactions
+
+- Pass `cleanup: true` to retire previous versions. Failed deletions keep durable retry records; the new version remains current.
+- Run or schedule `php artisan laravel-versioned-storage:cleanup` to retry pending deletions across resources. It fails explicitly if any deletion still fails.
+- Laravel-managed outer transactions defer cleanup until the outermost commit. Rollback removes staged versions and preserves the previous version.
+- Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Cleanup waits for active reads; already retired versions are unavailable to new reads.
+- Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
 
 ## Rules, References, and Templates
 
@@ -71,7 +82,8 @@ In tests, migrate the package tables and fake the selected Laravel disk. Assert 
 ## Anti-patterns
 
 - Do not skip the database migration.
-- Do not use `cleanup: true` if consumers still need old versions or may be reading them.
-- Do not assume database rollback undoes filesystem changes.
+- Do not use `cleanup: true` if consumers need to start future reads of old versions.
+- Do not bypass Laravel transaction APIs/events with raw PDO commits or rollbacks.
+- Do not assume filesystem operations are crash-atomic with database commits; process termination before publication can leave staged files.
 - Do not swallow callback/write failures: incomplete versions must not become current.
 - Do not depend on private metadata schema or mutate published snapshots directly.

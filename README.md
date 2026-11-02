@@ -77,6 +77,8 @@ VersionedStorage::versions('reports/daily.csv'); // [$first, $second]
 
 The contents of `reports/daily.csv` are stored at `reports/daily.csv/<version>` on the selected disk, not at the original logical path. Paths are relative to the disk root; leading slashes are normalized.
 
+`put()` also accepts Laravel `File` and `UploadedFile` objects; their contents are streamed into that exact version filename.
+
 ### Directory Snapshots
 
 ```php
@@ -103,7 +105,30 @@ Pass `cleanup: true` to `put()` or `directory()` to remove all previously publis
 
 Writes complete before the current-version pointer is changed in a database transaction. Concurrent publications of the same resource are serialized through a persistent database row; filesystem writes themselves do not hold that lock. Failed writes or callbacks are not published, and their staged data is removed. Missing versions return `false` from `exists()` and raise an exception from `get()`. Filesystem and database failures also raise exceptions.
 
-Cleanup runs after publication. If deleting an old version fails, an exception is raised but the new version remains current. Database transactions cannot roll back filesystem operations. Retain old versions when consumers may still be reading them; immediate cleanup can invalidate in-flight reads of a previous version.
+Cleanup runs after publication commits. If deleting an old version fails, an exception is raised but the new version remains current. Old versions are marked for deletion transactionally and hidden from public reads/lists; their database records are retained until physical deletion succeeds. Cleanup continues attempting other deletions when one fails. A subsequent write retries pending deletions, or you can retry without creating a new version:
+
+```php
+VersionedStorage::cleanup('reports/daily.csv');
+VersionedStorage::directory('reports/monthly')->cleanup();
+```
+
+To retry pending deletions across all resources on the configured metadata connection, run or schedule:
+
+```bash
+php artisan laravel-versioned-storage:cleanup
+```
+
+The command returns a failure exit code if any deletion still fails. It also recovers committed cleanup work left by a process that stopped before deleting the files.
+
+### Transactions and Concurrent Reads
+
+Writes inside Laravel-managed transactions on the metadata connection are supported. Cleanup waits for the outermost commit, including nested savepoint commits. Rolling back removes newly staged files and restores the previous current version without deleting its contents. Exceptions thrown after the database commits are propagated, but do not cause the committed current version to be deleted. If an application after-commit callback prevents automatic cleanup from running, the durable pending-deletion records remain available to the retry command.
+
+`get()` and `exists()` acquire a database resource lock before selecting a version and hold it through the filesystem operation. This protects both current-version and explicit-version reads that acquire the lock before cleanup. A read that starts after the version has been retired still reports it as missing. Each directory child read is protected separately, not as one multi-call read session.
+
+This protection intentionally allows a slow read to delay publication and cleanup of the same resource. Reads are serialized per resource; SQLite uses its database-wide write lock because it does not support row locks. Inside an existing application transaction, locks remain held until that transaction finishes, so keep transactions short and acquire resources in a consistent order to avoid deadlocks.
+
+Transaction handling relies on Laravel's connection APIs and transaction events; do not bypass them with raw PDO commits/rollbacks or remove the package's listeners. Database and filesystem operations are not a distributed transaction: process termination during an unpublished write can still leave staged files, and filesystem failures during rollback are reported rather than silently ignored.
 
 ### Configuration and Facade
 

@@ -6,14 +6,33 @@ namespace SkyRaptor\LaravelVersionedStorage;
 
 use Closure;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Http\File;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use RuntimeException;
 
 class VersionedStorage
 {
     public static function put(string $path, mixed $contents, bool $cleanup = false, ?string $disk = null): string
     {
         return self::handler($path, false, $disk)->write(
-            fn (FilesystemAdapter $filesystem, string $version) => $filesystem->put($version, $contents),
+            function (FilesystemAdapter $filesystem, string $version) use ($contents): void {
+                if ($contents instanceof File || $contents instanceof UploadedFile) {
+                    $stream = fopen($contents->getPathname(), 'rb');
+
+                    if ($stream === false) {
+                        throw new RuntimeException('Unable to open the supplied file for reading.');
+                    }
+
+                    try {
+                        $filesystem->put($version, $stream);
+                    } finally {
+                        fclose($stream);
+                    }
+                } else {
+                    $filesystem->put($version, $contents);
+                }
+            },
             $cleanup,
         );
     }
@@ -34,6 +53,11 @@ class VersionedStorage
     public static function versions(string $path, ?string $disk = null): array
     {
         return self::handler($path, false, $disk)->versions();
+    }
+
+    public static function cleanup(string $path, ?string $disk = null): void
+    {
+        self::handler($path, false, $disk)->cleanup();
     }
 
     /**

@@ -58,7 +58,7 @@ it('Can handle multiple single file versions', function () use ($create, $verify
 
     // Check & read again to verify all previous versions still exist
     foreach ($versions as $index => $version) {
-        $verify($file, 'File ' . ($index + 1), $version);
+        $verify($file, 'File '.($index + 1), $version);
     }
 });
 
@@ -81,7 +81,7 @@ it('Can cleanup previous single file versions', function () use ($create, $verif
             )->toBeFalse();
         } else {
             // Current version
-            $verify($file, 'File ' . ($index + 1), $version);
+            $verify($file, 'File '.($index + 1), $version);
         }
     }
 });
