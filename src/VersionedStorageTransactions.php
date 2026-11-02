@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SkyRaptor\LaravelVersionedStorage;
 
 use Illuminate\Database\Connection;
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Database\Events\TransactionRolledBack;
 use Throwable;
@@ -15,6 +16,16 @@ class VersionedStorageTransactions
      * @var array<int, list<array{handler: VersionedStorageHandler, version: ?string, level: int}>>
      */
     private array $pending = [];
+
+    public function beginning(TransactionBeginning $event): void
+    {
+        // Register before application callbacks can prevent the rollback event.
+        if (in_array('afterRollBack', get_class_methods($event->connection), true)) {
+            $event->connection->afterRollBack(
+                fn () => $this->rolledBack(new TransactionRolledBack($event->connection)),
+            );
+        }
+    }
 
     public function defer(Connection $connection, VersionedStorageHandler $handler, ?string $version = null): void
     {

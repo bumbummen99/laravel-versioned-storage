@@ -7,6 +7,7 @@ namespace SkyRaptor\LaravelVersionedStorage;
 use Closure;
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Database\Connection;
+use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
@@ -46,7 +47,7 @@ class VersionedStorageHandler
 
     public function get(string $path, ?string $version = null): string
     {
-        return $this->connection()->transaction(function () use ($path, $version): string {
+        return $this->transaction(function () use ($path, $version): string {
             $resource = $this->lockResource();
             $selected = $this->resolveVersion($version, $resource);
 
@@ -66,7 +67,7 @@ class VersionedStorageHandler
 
     public function exists(string $path, ?string $version = null): bool
     {
-        return $this->connection()->transaction(function () use ($path, $version): bool {
+        return $this->transaction(function () use ($path, $version): bool {
             $resource = $this->lockResource();
             $selected = $this->resolveVersion($version, $resource);
 
@@ -89,6 +90,7 @@ class VersionedStorageHandler
      */
     public function write(Closure $callback, bool $cleanup = false): string
     {
+        $this->registerResource();
         $version = (string) Str::uuid();
 
         try {
@@ -137,15 +139,7 @@ class VersionedStorageHandler
     {
         $connection = $this->connection();
 
-        $connection->transaction(function () use ($connection, $version, $cleanup): void {
-            // The persistent resource row serializes even concurrent first publications.
-            $connection->table('versioned_storage_resources')->insertOrIgnore([
-                'key' => $this->key,
-                'disk' => $this->disk,
-                'path' => $this->path,
-                'is_directory' => $this->directory,
-            ]);
-
+        $this->transaction(function () use ($connection, $version, $cleanup): void {
             $resource = $this->lockResource();
 
             if ($resource === null) {
@@ -180,7 +174,7 @@ class VersionedStorageHandler
 
         foreach ($pending as $version) {
             try {
-                $this->connection()->transaction(function () use ($version): void {
+                $this->transaction(function () use ($version): void {
                     $resource = $this->lockResource();
 
                     if ($resource === null || $resource->current_version === $version) {
@@ -267,10 +261,90 @@ class VersionedStorageHandler
         return $this->database;
     }
 
+    private function registerResource(): void
+    {
+        $connection = $this->connection();
+
+        if ($connection->table('versioned_storage_resources')->useWritePdo()->where('key', $this->key)->exists()) {
+            return;
+        }
+
+        $this->transaction(function () use ($connection): void {
+            $diskKey = hash('sha256', $this->disk);
+            $connection->table('versioned_storage_disks')->insertOrIgnore(['key' => $diskKey]);
+            $lock = $connection->table('versioned_storage_disks')->where('key', $diskKey);
+
+            if ($connection->getDriverName() === 'sqlite') {
+                $lock->update(['key' => $diskKey]);
+            }
+
+            $lock->lockForUpdate()->first();
+            $paths = $connection->table('versioned_storage_resources')->useWritePdo()
+                ->where('disk', $this->disk)->lockForUpdate()->pluck('path');
+
+            foreach ($paths as $path) {
+                if (str_starts_with($this->path, $path.'/') || str_starts_with($path, $this->path.'/')) {
+                    throw new InvalidArgumentException(
+                        "Versioned resource [{$this->path}] overlaps registered resource [{$path}] on disk [{$this->disk}].",
+                    );
+                }
+            }
+
+            $connection->table('versioned_storage_resources')->insertOrIgnore([
+                'key' => $this->key,
+                'disk' => $this->disk,
+                'path' => $this->path,
+                'is_directory' => $this->directory,
+            ]);
+        }, 5);
+    }
+
+    /**
+     * @template TReturn
+     *
+     * @param  Closure(): TReturn  $callback
+     * @param  positive-int  $attempts
+     * @return TReturn
+     */
+    private function transaction(Closure $callback, int $attempts = 1): mixed
+    {
+        try {
+            return $this->connection()->transaction($callback, $attempts);
+        } catch (Throwable $exception) {
+            $connection = $this->connection();
+
+            // Laravel can decrement its counter without rolling back a failed commit.
+            if ($connection->transactionLevel() === 0 && $connection->getPdo()->inTransaction()) {
+                try {
+                    $connection->getPdo()->rollBack();
+                    app(VersionedStorageTransactions::class)->rolledBack(new TransactionRolledBack($connection));
+                } catch (Throwable $recoveryException) {
+                    report($exception);
+
+                    throw $recoveryException;
+                }
+            }
+
+            throw $exception;
+        }
+    }
+
     private function removeVersion(string $version, ?Throwable $previous = null): void
     {
         $filesystem = $this->diskFilesystem;
         $path = $this->path.'/'.$version;
+
+        if ($this->directory) {
+            $resources = $this->connection()->table('versioned_storage_resources')->useWritePdo()
+                ->where('disk', $this->disk)->where('key', '!=', $this->key)->pluck('path');
+
+            foreach ($resources as $resourcePath) {
+                if ($resourcePath === $path || str_starts_with($resourcePath, $path.'/')) {
+                    throw new RuntimeException("Cannot remove version [{$version}]: it contains registered resource [{$resourcePath}].", 0, $previous);
+                }
+            }
+        }
+
         $deleted = $this->directory ? $filesystem->deleteDirectory($path) : $filesystem->delete($path);
 
         if (! $deleted) {

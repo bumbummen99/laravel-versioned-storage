@@ -46,6 +46,8 @@ Use `SkyRaptor\LaravelVersionedStorage\VersionedStorage` or `SkyRaptor\LaravelVe
 
 The directory callback receives a scoped Laravel `FilesystemAdapter`. All files in the new snapshot must be written by that callback; previous files are not copied.
 
+Use non-nested resource roots on each disk: `reports/daily` and `reports/monthly` can coexist, but neither can coexist with a `reports` root. Overlapping registrations throw before writing. UUIDs in logical paths and arbitrary nested callback contents remain allowed; file and directory resources at the exact same root remain distinct.
+
 Scoped public and temporary download URLs retain the selected disk's URL behavior and target the specific snapshot. External URL reads are not protected against cleanup. Temporary upload URLs are rejected: `providesTemporaryUploadUrls()` returns `false` and `temporaryUploadUrl()` throws, even with custom upload URL builders. Write all snapshot contents before the callback returns.
 
 Files use `<path>/<version>`; directory children use `<directory>/<version>/<child>`. Read through this API rather than through `Storage::get($logicalPath)`.
@@ -60,6 +62,8 @@ Files use `<path>/<version>`; directory children use `<directory>/<version>/<chi
 - Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Cleanup waits for active reads; already retired versions are unavailable to new reads.
 - Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
 - Metadata reads use the primary database, not read replicas. Handlers and deferred transaction work retain their originally resolved filesystem instance.
+- First registrations reserve roots under a per-disk database lock; failed writes can leave an empty reservation. Outer transactions retain registration locks until they finish.
+- Legacy resources inside physical version directories block destructive cleanup with an explicit error and retain retry records; resolve the ownership conflict before retrying.
 
 ## Rules, References, and Templates
 

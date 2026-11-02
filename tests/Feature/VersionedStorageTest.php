@@ -101,7 +101,8 @@ it('does not publish failed filesystem writes even on a non-throwing disk', func
     expect(fn () => VersionedStorage::put('file', 'contents', disk: 'failing'))
         ->toThrow(UnableToWriteFile::class)
         ->and(VersionedStorage::versions('file', 'failing'))->toBe([])
-        ->and(DB::table('versioned_storage_resources')->count())->toBe(0);
+        ->and(DB::table('versioned_storage_resources')->count())->toBe(1)
+        ->and(DB::table('versioned_storage_resources')->value('current_version'))->toBeNull();
 });
 
 it('removes a staged version if its database publication fails', function () {
@@ -185,8 +186,10 @@ it('uses the configured metadata connection for migrations and operations', func
     config()->set('laravel-versioned-storage.connection', 'metadata');
     $migration = require __DIR__.'/../../database/migrations/2026_01_01_000000_create_versioned_storage_tables.php';
     $cleanupMigration = require __DIR__.'/../../database/migrations/2026_01_01_000001_add_pending_delete_to_versioned_storage_versions.php';
+    $disksMigration = require __DIR__.'/../../database/migrations/2026_01_01_000002_create_versioned_storage_disks_table.php';
     $migration->up();
     $cleanupMigration->up();
+    $disksMigration->up();
 
     try {
         $version = VersionedStorage::put('connection', 'contents');
@@ -194,6 +197,7 @@ it('uses the configured metadata connection for migrations and operations', func
             ->and(DB::connection('metadata')->table('versioned_storage_versions')->value('version'))->toBe($version)
             ->and(DB::connection('testing')->table('versioned_storage_versions')->count())->toBe(0);
     } finally {
+        $disksMigration->down();
         $cleanupMigration->down();
         $migration->down();
         DB::purge('metadata');

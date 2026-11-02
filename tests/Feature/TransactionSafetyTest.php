@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Database\Events\TransactionCommitted;
+use Illuminate\Database\Events\TransactionCommitting;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\File;
 use Illuminate\Http\UploadedFile;
@@ -120,6 +121,73 @@ it('does not delete a committed version when an after commit callback throws', f
         ->and(VersionedStorage::versions('after-commit'))->toBe([$version]);
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
     Storage::disk('local')->assertMissing("after-commit/{$first}");
+});
+
+it('removes staged files when an application after rollback callback throws', function () {
+    $connection = DB::connection();
+
+    if (! method_exists($connection, 'afterRollBack')) {
+        $this->markTestSkipped('This Laravel version does not support after-rollback callbacks.');
+    }
+
+    $first = VersionedStorage::put('rollback-callback', 'original');
+    $connection->beginTransaction();
+    $callbackCalled = false;
+    $connection->afterRollBack(function () use (&$callbackCalled): void {
+        if (! $callbackCalled) {
+            $callbackCalled = true;
+
+            throw new RuntimeException('rollback callback failed');
+        }
+    });
+    $second = VersionedStorage::put('rollback-callback', 'staged', true);
+
+    expect(fn () => $connection->rollBack())
+        ->toThrow(RuntimeException::class, 'rollback callback failed');
+
+    expect($callbackCalled)->toBeTrue()
+        ->and($connection->transactionLevel())->toBe(0)
+        ->and($connection->getPdo()->inTransaction())->toBeFalse()
+        ->and(VersionedStorage::versions('rollback-callback'))->toBe([$first])
+        ->and(VersionedStorage::get('rollback-callback'))->toBe('original');
+    Storage::disk('local')->assertExists("rollback-callback/{$first}");
+    Storage::disk('local')->assertMissing("rollback-callback/{$second}");
+});
+
+it('restores transaction state and removes staged files when a before commit listener throws', function () {
+    $first = VersionedStorage::put('precommit-failure', 'original');
+    $connection = DB::connection();
+    Event::listen(TransactionCommitting::class, function (): void {
+        throw new RuntimeException('before commit failed');
+    });
+
+    try {
+        expect(fn () => VersionedStorage::put('precommit-failure', 'staged', true))
+            ->toThrow(RuntimeException::class, 'before commit failed');
+
+        $state = [
+            'laravel_level' => $connection->transactionLevel(),
+            'pdo_in_transaction' => $connection->getPdo()->inTransaction(),
+            'files' => Storage::disk('local')->allFiles('precommit-failure'),
+        ];
+    } finally {
+        Event::forget(TransactionCommitting::class);
+
+        // Repair the connection only after capturing the state left by publication.
+        if ($connection->transactionLevel() > 0) {
+            $connection->rollBack(0);
+        } elseif ($connection->getPdo()->inTransaction()) {
+            $connection->getPdo()->rollBack();
+        }
+    }
+
+    expect(VersionedStorage::versions('precommit-failure'))->toBe([$first])
+        ->and(VersionedStorage::get('precommit-failure'))->toBe('original')
+        ->and($state)->toBe([
+            'laravel_level' => 0,
+            'pdo_in_transaction' => false,
+            'files' => ["precommit-failure/{$first}"],
+        ]);
 });
 
 it('retains failed cleanup records and can retry cleanup without publishing again', function () {

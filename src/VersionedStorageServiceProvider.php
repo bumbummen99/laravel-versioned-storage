@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SkyRaptor\LaravelVersionedStorage;
 
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Database\Events\TransactionRolledBack;
 use Illuminate\Support\Facades\Event;
@@ -29,6 +30,7 @@ class VersionedStorageServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Event::listen(TransactionBeginning::class, [VersionedStorageTransactions::class, 'beginning']);
         Event::listen(TransactionCommitted::class, [VersionedStorageTransactions::class, 'committed']);
         Event::listen(TransactionRolledBack::class, [VersionedStorageTransactions::class, 'rolledBack']);
 

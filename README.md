@@ -99,6 +99,8 @@ $directory->versions(); // oldest to newest
 
 Directory files are stored at `reports/monthly/<version>/summary.txt` and `reports/monthly/<version>/details/data.csv`. The callback receives a Laravel filesystem scoped to the new version. Each snapshot is independent: files from previous versions are not copied automatically.
 
+Registered resource roots on the same disk must not be nested. For example, after registering `reports/monthly`, registering `reports` or `reports/monthly/other` throws an `InvalidArgumentException` before writing or invoking a callback. Sibling roots such as `reports/daily` remain valid. UUIDs in logical paths are allowed, and files and subdirectories inside a directory callback are unrestricted by this ownership rule. The existing distinction between file and directory resources at the exact same root is preserved.
+
 The scoped filesystem preserves the selected disk's public and temporary download URL behavior, including custom URL builders. URLs target that specific snapshot; external URL requests do not acquire the package's read locks and can fail after cleanup removes the version. Temporary upload URLs are explicitly unsupported: `providesTemporaryUploadUrls()` returns `false`, and `temporaryUploadUrl()` throws a `RuntimeException`, even if the disk supports them or a custom upload URL builder is configured. All snapshot contents must be written before the callback returns; deferred uploads would allow writes after publication.
 
 ### Cleanup and Errors
@@ -106,6 +108,8 @@ The scoped filesystem preserves the selected disk's public and temporary downloa
 Pass `cleanup: true` to `put()` or `directory()` to remove all previously published versions of that resource, both from the database and from the filesystem. Other resources and unregistered files are left untouched.
 
 Writes complete before the current-version pointer is changed in a database transaction. Concurrent publications of the same resource are serialized through a persistent database row; filesystem writes themselves do not hold that lock. Failed writes or callbacks are not published, and their staged data is removed. Missing versions return `false` from `exists()` and raise an exception from `get()`. Filesystem and database failures also raise exceptions.
+
+Resource roots are reserved before staging files. First registrations are serialized per disk using a database lock so concurrent writers cannot register overlapping roots. A failed write can leave an empty resource reservation with no current version; it is not a published snapshot. Inside an outer application transaction, registration locks remain held until that transaction finishes.
 
 Cleanup runs after publication commits. If deleting an old version fails, an exception is raised but the new version remains current. Old versions are marked for deletion transactionally and hidden from public reads/lists; their database records are retained until physical deletion succeeds. Cleanup continues attempting other deletions when one fails. A subsequent write retries pending deletions, or you can retry without creating a new version:
 
@@ -122,9 +126,13 @@ php artisan laravel-versioned-storage:cleanup
 
 The command returns a failure exit code if any deletion still fails. It also recovers committed cleanup work left by a process that stopped before deleting the files.
 
+If legacy metadata already registers another resource inside a version directory, deletion of that directory fails explicitly and retains its pending-deletion record. Move or resolve the conflicting resource before retrying cleanup; it is not deleted automatically.
+
 ### Transactions and Concurrent Reads
 
 Writes inside Laravel-managed transactions on the metadata connection are supported. Cleanup waits for the outermost commit, including nested savepoint commits. Rolling back removes newly staged files and restores the previous current version without deleting its contents. Exceptions thrown after the database commits are propagated, but do not cause the committed current version to be deleted. If an application after-commit callback prevents automatic cleanup from running, the durable pending-deletion records remain available to the retry command.
+
+On Laravel versions with after-rollback callbacks, the package registers its rollback hook when the transaction begins, before application callbacks can throw and prevent the rollback event. If a failed package-managed commit leaves PDO in a transaction despite Laravel reporting transaction level zero, the package rolls back that transaction before deciding whether publication succeeded.
 
 `get()` and `exists()` acquire a database resource lock before selecting a version and hold it through the filesystem operation. This protects both current-version and explicit-version reads that acquire the lock before cleanup. A read that starts after the version has been retired still reports it as missing. Each directory child read is protected separately, not as one multi-call read session.
 

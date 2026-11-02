@@ -27,14 +27,24 @@ Application::create(resolvingCallback: function ($app) use ($database, $root): v
     });
 }, options: ['extra' => ['providers' => [VersionedStorageServiceProvider::class], 'dont-discover' => ['*']]]);
 
-DB::connection()->beforeExecuting(function (string $sql, array $bindings, Connection $connection): void {
-    if (str_starts_with($sql, 'insert or ignore into "versioned_storage_resources"')) {
+DB::connection()->beforeExecuting(function (string $sql, array $bindings, Connection $connection) use ($directory): void {
+    if ($directory === 'register' && str_starts_with($sql, 'insert or ignore into "versioned_storage_disks"')) {
+        fwrite(STDOUT, "registering\n");
+        fflush(STDOUT);
+    } elseif (str_starts_with($sql, 'update "versioned_storage_resources" set "key"')) {
         fwrite(STDOUT, "publishing\n");
         fflush(STDOUT);
     }
 });
 
-if ($directory === 'directory') {
+if ($directory === 'register') {
+    try {
+        VersionedStorage::put($argv[4], 'child contents');
+        fwrite(STDOUT, "accepted\n");
+    } catch (InvalidArgumentException $exception) {
+        fwrite(STDOUT, 'rejected: '.$exception->getMessage()."\n");
+    }
+} elseif ($directory === 'directory') {
     VersionedStorage::directory('protected', function (FilesystemAdapter $files): void {
         $files->put('one', 'replacement');
     }, true);
