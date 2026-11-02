@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace LaravelVersionedStorage\VersionedStorage\Facades;
+namespace SkyRaptor\LaravelVersionedStorage\Facades;
 
 use Illuminate\Support\Facades\Facade;
 
 /**
- * @see \LaravelVersionedStorage\VersionedStorage\VersionedStorage
+ * @see \SkyRaptor\LaravelVersionedStorage\VersionedStorage
  */
 class VersionedStorage extends Facade
 {
     protected static function getFacadeAccessor(): string
     {
-        return \LaravelVersionedStorage\VersionedStorage\VersionedStorage::class;
+        return \SkyRaptor\LaravelVersionedStorage\VersionedStorage::class;
     }
 }

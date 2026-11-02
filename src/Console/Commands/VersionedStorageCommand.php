@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace LaravelVersionedStorage\VersionedStorage\Console\Commands;
+namespace SkyRaptor\LaravelVersionedStorage\Console\Commands;
 
 use Illuminate\Console\Command;
 

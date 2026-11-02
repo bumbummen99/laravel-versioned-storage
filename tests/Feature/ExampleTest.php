@@ -2,7 +2,8 @@
 
 declare(strict_types=1);
 
-use LaravelVersionedStorage\VersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 
 it('resolves the singleton', function () {
     expect(app(VersionedStorage::class))->toBeInstanceOf(VersionedStorage::class);
@@ -13,7 +14,24 @@ it('returns the same instance from the container', function () {
 });
 
 it('merges the package config', function () {
-    expect(config('laravel-versioned-storage.placeholder'))->toBe('default');
+    expect(config('laravel-versioned-storage.disk'))->toBeNull()
+        ->and(config('laravel-versioned-storage.connection'))->toBeNull();
+});
+
+it('registers publishable configuration and storage migrations', function () {
+    $config = VersionedStorageServiceProvider::pathsToPublish(
+        VersionedStorageServiceProvider::class,
+        'laravel-versioned-storage-config',
+    );
+    $migrations = VersionedStorageServiceProvider::pathsToPublish(
+        VersionedStorageServiceProvider::class,
+        'laravel-versioned-storage-migrations',
+    );
+
+    expect(array_values($config))->toBe([config_path('laravel-versioned-storage.php')])
+        ->and(array_map('realpath', array_keys($config)))->toBe([realpath(__DIR__.'/../../config/laravel-versioned-storage.php')])
+        ->and($migrations)->toHaveCount(1)
+        ->and(array_values($migrations))->toBe([database_path('migrations')]);
 });
 
 it('loads the package translations', function () {

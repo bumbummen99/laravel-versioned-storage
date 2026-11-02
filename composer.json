@@ -18,7 +18,10 @@
     ],
     "require": {
         "php": "^8.3",
-        "illuminate/support": "^12.0||^13.0"
+        "illuminate/database": "^12.0||^13.0",
+        "illuminate/filesystem": "^12.0||^13.0",
+        "illuminate/support": "^12.0||^13.0",
+        "league/flysystem-path-prefixing": "^3.0"
     },
     "require-dev": {
         "larastan/larastan": "^3.9",
@@ -32,12 +35,12 @@
     },
     "autoload": {
         "psr-4": {
-            "LaravelVersionedStorage\\VersionedStorage\\": "src/"
+            "SkyRaptor\\LaravelVersionedStorage\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "LaravelVersionedStorage\\VersionedStorage\\Tests\\": "tests/",
+            "SkyRaptor\\LaravelVersionedStorage\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/",
             "Workbench\\Database\\Factories\\": "workbench/database/factories/",
             "Workbench\\Database\\Seeders\\": "workbench/database/seeders/"
@@ -87,10 +90,10 @@
     "extra": {
         "laravel": {
             "providers": [
-                "LaravelVersionedStorage\\VersionedStorage\\VersionedStorageServiceProvider"
+                "SkyRaptor\\LaravelVersionedStorage\\VersionedStorageServiceProvider"
             ],
             "aliases": {
-                "VersionedStorage": "LaravelVersionedStorage\\VersionedStorage\\Facades\\VersionedStorage"
+                "VersionedStorage": "SkyRaptor\\LaravelVersionedStorage\\Facades\\VersionedStorage"
             }
         }
     },

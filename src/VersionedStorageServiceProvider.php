@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace LaravelVersionedStorage\VersionedStorage;
+namespace SkyRaptor\LaravelVersionedStorage;
 
 use Illuminate\Support\ServiceProvider;
-use LaravelVersionedStorage\VersionedStorage\Console\Commands\VersionedStorageCommand;
+use SkyRaptor\LaravelVersionedStorage\Console\Commands\VersionedStorageCommand;
 
 class VersionedStorageServiceProvider extends ServiceProvider
 {
