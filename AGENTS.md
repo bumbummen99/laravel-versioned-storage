@@ -34,3 +34,9 @@ It primarily handles the storage of files in a versioned manner, where writing t
 write operations might be run from different processes, where writing to the same destination might interfere, even with locks, since the driver itself might stall, 
 creating a race condition. Versions and the reference to the current version are stored in the Database to provide a common storage between installations that
 can be changed transactionally.
+
+### File
+The parent directory of the file path contains version directories, which contain the file. So the file path `foo/bar/baz` becomes `foo/bar/baz/<version>`.
+
+### Directory
+The directory path contains version directories, which contain the files. So the file `baz` in the directory `foo/bar` becomes `foo/bar/<version>/baz`.
