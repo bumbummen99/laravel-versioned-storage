@@ -31,6 +31,106 @@ it('rejects separately registered resources inside a directory version before wr
     Storage::disk('local')->assertMissing("reports/{$parent}/summary.txt");
 });
 
+it('rejects overlapping resources registered through a second disk name for the same filesystem', function () {
+    $local = Storage::disk('local');
+    Storage::set('local-alias', $local);
+
+    try {
+        $parent = VersionedStorage::directory('shared-reports', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'parent contents');
+        }, disk: 'local');
+        $childPath = "shared-reports/{$parent}/independent";
+        expect(fn () => VersionedStorage::put($childPath, 'independent contents', disk: 'local-alias'))
+            ->toThrow(InvalidArgumentException::class, 'overlaps registered resource');
+
+        $replacement = VersionedStorage::directory('shared-reports', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'replacement contents');
+        }, cleanup: true, disk: 'local');
+
+        expect(VersionedStorage::directory('shared-reports', disk: 'local')->versions())->toBe([$replacement])
+            ->and(VersionedStorage::versions($childPath, 'local-alias'))->toBe([])
+            ->and(VersionedStorage::exists($childPath, disk: 'local-alias'))->toBeFalse();
+        $local->assertMissing("shared-reports/{$parent}/summary.txt");
+        $local->assertMissing($childPath);
+    } finally {
+        Storage::forgetDisk('local-alias');
+    }
+});
+
+it('rejects the same resource root registered through a disk alias', function (bool $directory) {
+    $local = Storage::disk('local');
+    Storage::set('local-alias', $local);
+    $called = false;
+    $callback = function (FilesystemAdapter $files) use (&$called): void {
+        $called = true;
+        $files->put('child', 'contents');
+    };
+
+    try {
+        $version = $directory
+            ? VersionedStorage::directory('shared', $callback)
+            : VersionedStorage::put('shared', 'contents');
+        $called = false;
+
+        expect(fn () => $directory
+            ? VersionedStorage::directory('shared', $callback, disk: 'local-alias')
+            : VersionedStorage::put('shared', 'replacement', disk: 'local-alias'))
+            ->toThrow(InvalidArgumentException::class, 'overlaps registered resource');
+
+        expect($called)->toBeFalse()
+            ->and($directory
+                ? VersionedStorage::directory('shared')->versions()
+                : VersionedStorage::versions('shared'))->toBe([$version])
+            ->and($directory
+                ? VersionedStorage::directory('shared', disk: 'local-alias')->versions()
+                : VersionedStorage::versions('shared', 'local-alias'))->toBe([])
+            ->and($local->allFiles('shared'))->toBe([
+                $directory ? "shared/{$version}/child" : "shared/{$version}",
+            ]);
+    } finally {
+        Storage::forgetDisk('local-alias');
+    }
+})->with([true, false]);
+
+it('protects legacy overlapping resources registered through a second disk name during cleanup', function () {
+    $local = Storage::disk('local');
+    Storage::set('local-alias', $local);
+
+    try {
+        $parent = VersionedStorage::directory('shared-legacy', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'parent contents');
+        }, disk: 'local');
+        $childPath = "shared-legacy/{$parent}/independent";
+        $child = (string) Str::uuid();
+        $resourceId = DB::table('versioned_storage_resources')->insertGetId([
+            'key' => hash('sha256', "local-alias\0{$childPath}\0file"),
+            'disk' => 'local-alias',
+            'path' => $childPath,
+            'is_directory' => false,
+        ]);
+        DB::table('versioned_storage_versions')->insert([
+            'resource_id' => $resourceId,
+            'version' => $child,
+            'created_at' => now(),
+        ]);
+        $local->put("{$childPath}/{$child}", 'independent contents');
+
+        expect(fn () => VersionedStorage::directory('shared-legacy', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'replacement contents');
+        }, cleanup: true, disk: 'local'))
+            ->toThrow(RuntimeException::class, 'contains registered resource');
+
+        expect(VersionedStorage::directory('shared-legacy', disk: 'local')->get('summary.txt'))
+            ->toBe('replacement contents')
+            ->and(VersionedStorage::versions($childPath, 'local-alias'))->toBe([$child])
+            ->and(VersionedStorage::get($childPath, $child, 'local-alias'))->toBe('independent contents');
+        $local->assertExists("shared-legacy/{$parent}/summary.txt");
+        $local->assertExists("{$childPath}/{$child}");
+    } finally {
+        Storage::forgetDisk('local-alias');
+    }
+});
+
 it('rejects nested resource roots in either registration order', function (bool $parentFirst) {
     $existing = $parentFirst ? 'reports' : 'reports/monthly';
     $rejected = $parentFirst ? 'reports/monthly' : 'reports';

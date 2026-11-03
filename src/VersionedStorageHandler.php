@@ -218,9 +218,11 @@ class VersionedStorageHandler
 
     public function discard(string $version): void
     {
-        if (! $this->versionQuery()->where('version', $version)->exists()) {
-            $this->removeVersion($version);
-        }
+        $this->transaction(function () use ($version): void {
+            if (! $this->versionQuery()->where('version', $version)->exists()) {
+                $this->removeVersion($version);
+            }
+        });
     }
 
     private function deferIfTransactional(string $version): bool
@@ -284,22 +286,17 @@ class VersionedStorageHandler
         }
 
         $this->transaction(function () use ($connection): void {
-            $diskKey = hash('sha256', $this->disk);
-            $connection->table('versioned_storage_disks')->insertOrIgnore(['key' => $diskKey]);
-            $lock = $connection->table('versioned_storage_disks')->where('key', $diskKey);
-
-            if ($connection->getDriverName() === 'sqlite') {
-                $lock->update(['key' => $diskKey]);
-            }
-
-            $lock->lockForUpdate()->first();
+            $this->lockResourceRegistration();
             $paths = $connection->table('versioned_storage_resources')->useWritePdo()
-                ->where('disk', $this->disk)->lockForUpdate()->pluck('path');
+                ->where('key', '!=', $this->key)->lockForUpdate()->get(['disk', 'path']);
 
-            foreach ($paths as $path) {
-                if (str_starts_with($this->path, $path.'/') || str_starts_with($path, $this->path.'/')) {
+            foreach ($paths as $resource) {
+                if (($this->path === $resource->path
+                    || str_starts_with($this->path, $resource->path.'/')
+                    || str_starts_with($resource->path, $this->path.'/'))
+                    && $this->sharesFilesystem((string) $resource->disk)) {
                     throw new InvalidArgumentException(
-                        "Versioned resource [{$this->path}] overlaps registered resource [{$path}] on disk [{$this->disk}].",
+                        "Versioned resource [{$this->path}] overlaps registered resource [{$resource->path}] on disk [{$this->disk}].",
                     );
                 }
             }
@@ -351,16 +348,21 @@ class VersionedStorageHandler
 
     private function removeVersion(string $version, ?Throwable $previous = null): void
     {
+        if ($this->connection()->transactionLevel() > 0) {
+            $this->lockResourceRegistration();
+        }
+
         $filesystem = $this->diskFilesystem;
         $path = $this->path.'/'.$version;
 
         if ($this->directory) {
             $resources = $this->connection()->table('versioned_storage_resources')->useWritePdo()
-                ->where('disk', $this->disk)->where('key', '!=', $this->key)->pluck('path');
+                ->where('key', '!=', $this->key)->get(['disk', 'path']);
 
-            foreach ($resources as $resourcePath) {
-                if ($resourcePath === $path || str_starts_with($resourcePath, $path.'/')) {
-                    throw new RuntimeException("Cannot remove version [{$version}]: it contains registered resource [{$resourcePath}].", 0, $previous);
+            foreach ($resources as $resource) {
+                if (($resource->path === $path || str_starts_with($resource->path, $path.'/'))
+                    && $this->sharesFilesystem((string) $resource->disk)) {
+                    throw new RuntimeException("Cannot remove version [{$version}]: it contains registered resource [{$resource->path}].", 0, $previous);
                 }
             }
         }
@@ -370,5 +372,24 @@ class VersionedStorageHandler
         if (! $deleted) {
             throw new RuntimeException("Unable to remove version [{$version}] of [{$this->path}].", 0, $previous);
         }
+    }
+
+    private function lockResourceRegistration(): void
+    {
+        $connection = $this->connection();
+        $key = hash('sha256', 'versioned-storage-resource-registration');
+        $connection->table('versioned_storage_disks')->insertOrIgnore(['key' => $key]);
+        $lock = $connection->table('versioned_storage_disks')->where('key', $key);
+
+        if ($connection->getDriverName() === 'sqlite') {
+            $lock->update(['key' => $key]);
+        }
+
+        $lock->lockForUpdate()->first();
+    }
+
+    private function sharesFilesystem(string $disk): bool
+    {
+        return Storage::disk($disk)->getAdapter() === $this->diskFilesystem->getAdapter();
     }
 }

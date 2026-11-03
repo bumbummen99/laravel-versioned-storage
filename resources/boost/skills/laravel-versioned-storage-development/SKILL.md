@@ -46,7 +46,7 @@ Use `SkyRaptor\LaravelVersionedStorage\VersionedStorage` or `SkyRaptor\LaravelVe
 
 The directory callback receives a scoped Laravel `FilesystemAdapter`. All files in the new snapshot must be written by that callback; previous files are not copied.
 
-Use non-nested resource roots on each disk: `reports/daily` and `reports/monthly` can coexist, but neither can coexist with a `reports` root. Overlapping registrations throw before writing. UUIDs in logical paths and arbitrary nested callback contents remain allowed; file and directory resources at the exact same root remain distinct.
+Each resource must exclusively own its physical version container, whose immediate entries are only that resource's UUID versions. Never share a container between disk names, logical paths, or file and directory resources. Nested disk roots are allowed when resource containers remain separate; do not place a resource inside another resource's container or snapshot. Developers must ensure exclusivity across disk configurations and external writes; automatic detection of every physical overlap is not guaranteed. Existing guards reject separate resources with identical or nested logical roots sharing a Flysystem adapter before writing, including file/directory mixing and disk aliases. Further versions of the same resource remain allowed. UUIDs in logical paths and arbitrary nested callback contents remain allowed.
 
 Scoped public and temporary download URLs retain the selected disk's URL behavior and target the specific snapshot. External URL reads are not protected against cleanup. Temporary upload URLs are rejected: `providesTemporaryUploadUrls()` returns `false` and `temporaryUploadUrl()` throws, even with custom upload URL builders. Write all snapshot contents before the callback returns.
 
@@ -67,7 +67,7 @@ Snapshot copy/move operations follow Laravel's visibility configuration, includi
 - Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Cleanup waits for active reads; already retired versions are unavailable to new reads.
 - Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
 - Metadata reads use the primary database, not read replicas. Handlers and deferred transaction work retain their originally resolved filesystem instance.
-- First registrations reserve roots under a per-disk database lock; failed writes can leave an empty reservation. Outer transactions retain registration locks until they finish.
+- First registrations reserve roots under a shared database lock; this protects existing overlap guards, not arbitrary physical overlap detection. Failed writes can leave an empty reservation. Outer transactions retain registration locks until they finish.
 - Duplicate version UUIDs and occupied destination paths fail before writes. Committed UUID reservations survive cleanup and failed writes; outer rollbacks undo uncommitted reservations. Publish/run the reservations migration with package writers paused when upgrading.
 - Legacy resources inside physical version directories block destructive cleanup with an explicit error and retain retry records; resolve the ownership conflict before retrying.
 
@@ -100,3 +100,4 @@ In tests, migrate the package tables and fake the selected Laravel disk. Assert 
 - Do not assume filesystem operations are crash-atomic with database commits; process termination before publication can leave staged files.
 - Do not swallow callback/write failures: incomplete versions must not become current.
 - Do not depend on private metadata schema or mutate published snapshots directly.
+- Do not mix resources' UUID versions in one physical container, including through different disks or file/directory APIs.

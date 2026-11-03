@@ -103,9 +103,21 @@ All storage paths are relative to the selected disk's configured prefix, includi
 
 Snapshot copy and move operations preserve Laravel's visibility configuration, including its `retain_visibility=false` setting for Cloudflare R2 endpoints.
 
-Registered resource roots on the same disk must not be nested. For example, after registering `reports/monthly`, registering `reports` or `reports/monthly/other` throws an `InvalidArgumentException` before writing or invoking a callback. Sibling roots such as `reports/daily` remain valid. UUIDs in logical paths are allowed, and files and subdirectories inside a directory callback are unrestricted by this ownership rule. The existing distinction between file and directory resources at the exact same root is preserved.
-
 The scoped filesystem preserves the selected disk's public and temporary download URL behavior, including custom URL builders. URLs target that specific snapshot; external URL requests do not acquire the package's read locks and can fail after cleanup removes the version. Temporary upload URLs are explicitly unsupported: `providesTemporaryUploadUrls()` returns `false`, and `temporaryUploadUrl()` throws a `RuntimeException`, even if the disk supports them or a custom upload URL builder is configured. All snapshot contents must be written before the callback returns; deferred uploads would allow writes after publication.
+
+### Exclusive Version Containers and Nested Disks
+
+Each resource exclusively owns its version container: the directory at its logical path, resolved against the selected disk's root and prefix. A versioned file `reports/daily.csv` uses `reports/daily.csv/<uuid>` for its file versions; a versioned directory `reports/monthly` uses `reports/monthly/<uuid>/...` for its directory snapshots. The container's immediate entries are reserved exclusively for that resource's UUID versions.
+
+The following configurations are invalid and unsupported, even if they appear to work:
+
+- Using different disk names or logical paths that resolve to the same physical version container for separate resources.
+- Using the same physical version container for both a versioned file and a versioned directory.
+- Placing another resource's container or unrelated files inside a version container or its snapshots. Snapshot contents must be written through that snapshot's callback, not independently modified after publication.
+
+Nested disk roots are allowed. For example, disk `main` rooted at `/storage` can store `exports/daily.csv`, while disk `tenant` rooted at `/storage/tenants/acme` stores `reports/monthly`. Their containers are separate. However, `main` with path `tenants/acme/reports/monthly` and `tenant` with path `reports/monthly` resolve to the same container and must not be used as separate resources.
+
+Developers are responsible for keeping these containers exclusive across disk configurations, application installations, and external writes. The package does not promise to detect every physical overlap across filesystem drivers. Existing overlap guards are safeguards, not support for sharing or merging containers: separate resources with identical or nested logical roots sharing a Flysystem adapter are rejected with an `InvalidArgumentException` before writing or invoking a callback. This includes switching between file and directory APIs at the same root or registering that root through a disk alias. Further versions of the same resource remain allowed. UUIDs in logical paths and arbitrary files and subdirectories within a directory snapshot remain allowed.
 
 ### Cleanup and Errors
 
@@ -113,7 +125,7 @@ Pass `cleanup: true` to `put()` or `directory()` to remove all previously publis
 
 Writes complete before the current-version pointer is changed in a database transaction. Concurrent publications of the same resource are serialized through a persistent database row; filesystem writes themselves do not hold that lock. Failed writes or callbacks are not published, and their staged data is removed. Missing versions return `false` from `exists()` and raise an exception from `get()`. Filesystem and database failures also raise exceptions.
 
-Resource roots are reserved before staging files. First registrations are serialized per disk using a database lock so concurrent writers cannot register overlapping roots. A failed write can leave an empty resource reservation with no current version; it is not a published snapshot. Inside an outer application transaction, registration locks remain held until that transaction finishes.
+Resource roots are reserved before staging files. First registrations are serialized using a shared database lock so concurrent writers cannot bypass the overlap guards. This does not detect every physical overlap or make invalid disk configurations safe. A failed write can leave an empty resource reservation with no current version; it is not a published snapshot. Inside an outer application transaction, registration locks remain held until that transaction finishes.
 
 Version UUIDs are reserved atomically in the metadata database before touching their filesystem paths. A duplicate UUID raises an exception without invoking the write callback or modifying the existing snapshot; it is not automatically retried. An already occupied destination path is also rejected without deleting its contents. Committed UUID reservations are retained after failed writes and cleanup so retired identifiers cannot be reused. Reservations made inside an outer transaction follow that transaction's rollback.
 

@@ -151,17 +151,41 @@ it('isolates versions by disk and honors the configured default disk', function 
     expect(VersionedStorage::get('file', disk: 'local'))->toBe('local');
 });
 
-it('keeps file and directory versions distinct even when their logical path is the same', function () {
-    $file = VersionedStorage::put('shared', 'file');
-    $directory = VersionedStorage::directory('shared', function (FilesystemAdapter $files): void {
+it('rejects file and directory resources sharing the same root', function (bool $directoryFirst, bool $alias) {
+    $disk = Storage::disk('local');
+    Storage::set('local-alias', $disk);
+    $called = false;
+    $callback = function (FilesystemAdapter $files) use (&$called): void {
+        $called = true;
         $files->put('child', 'directory');
-    });
+    };
 
-    VersionedStorage::put('shared', 'replacement', true);
-    expect(VersionedStorage::exists('shared', $file))->toBeFalse()
-        ->and(VersionedStorage::directory('shared')->get('child', $directory))->toBe('directory')
-        ->and(VersionedStorage::directory('shared')->versions())->toBe([$directory]);
-});
+    try {
+        $version = $directoryFirst
+            ? VersionedStorage::directory('shared', $callback)
+            : VersionedStorage::put('shared', 'file');
+        $called = false;
+        $targetDisk = $alias ? 'local-alias' : 'local';
+
+        expect(fn () => $directoryFirst
+            ? VersionedStorage::put('/shared/', 'replacement', disk: $targetDisk)
+            : VersionedStorage::directory('/shared/', $callback, disk: $targetDisk))
+            ->toThrow(InvalidArgumentException::class, 'overlaps registered resource');
+
+        expect($called)->toBeFalse()
+            ->and($directoryFirst
+                ? VersionedStorage::versions('shared', $targetDisk)
+                : VersionedStorage::directory('shared', disk: $targetDisk)->versions())->toBe([])
+            ->and($directoryFirst
+                ? VersionedStorage::directory('shared')->get('child', $version)
+                : VersionedStorage::get('shared', $version))->toBe($directoryFirst ? 'directory' : 'file')
+            ->and($disk->allFiles('shared'))->toBe([
+                $directoryFirst ? "shared/{$version}/child" : "shared/{$version}",
+            ]);
+    } finally {
+        Storage::forgetDisk('local-alias');
+    }
+})->with([true, false])->with([true, false]);
 
 it('only cleans published versions when another writer is still preparing its snapshot', function () {
     $inner = null;
