@@ -1,0 +1,8 @@
+{
+    "runner.bootstrap": "benchmarks/bootstrap.php",
+    "runner.path": "benchmarks/StorageBench.php",
+    "runner.php_config": {
+        "opcache.enable_cli": "0"
+    },
+    "storage.xml_storage_path": "build/phpbench"
+}

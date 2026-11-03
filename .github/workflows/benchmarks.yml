@@ -1,0 +1,78 @@
+name: benchmarks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmarks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout PR head and benchmark harness
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Checkout PR target
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: build/benchmark-base
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, bcmath, intl
+          tools: composer:v2
+          coverage: none
+
+      - name: Install shared dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Benchmark PR target
+        env:
+          VERSIONED_STORAGE_BENCHMARK_SOURCE: ${{ github.workspace }}/build/benchmark-base
+          XDEBUG_MODE: 'off'
+        run: vendor/bin/phpbench run --store --tag=pr_target --no-ansi --dump-file=build/phpbench-base.xml
+
+      - name: Benchmark PR head against target
+        env:
+          VERSIONED_STORAGE_BENCHMARK_SOURCE: ${{ github.workspace }}
+          XDEBUG_MODE: 'off'
+        run: |
+          set -o pipefail
+          vendor/bin/phpbench run --ref=pr_target --report=aggregate --no-ansi --dump-file=build/phpbench-head.xml | tee build/phpbench-comparison.txt
+
+      - name: Publish comparison in job summary
+        if: always()
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo '## PHPBench: PR target vs PR head'
+            echo
+            echo "Baseline: \`$BASE_SHA\`"
+            echo "PR head: \`$HEAD_SHA\`"
+            echo
+            echo 'Both revisions use the PR head benchmark harness and dependencies on the same runner.'
+            echo 'Timings and memory are informational; query and filesystem call budgets remain in the regular test suite.'
+            echo
+            if [ -f build/phpbench-comparison.txt ]; then
+              echo '```text'
+              cat build/phpbench-comparison.txt
+              echo '```'
+            else
+              echo 'Comparison did not complete. See the failed step logs.'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
