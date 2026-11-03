@@ -138,6 +138,8 @@ VersionedStorage::cleanup('reports/daily.csv');
 VersionedStorage::directory('reports/monthly')->cleanup();
 ```
 
+Snapshot removal includes a post-delete existence check before its metadata is discarded. If the path remains, or verification throws, cleanup fails and retains the pending-deletion record. This also catches adapters that silently ignore a server's deletion refusal. Verification adds filesystem existence checks to snapshot removal, including remote requests for remote disks.
+
 To retry pending deletions across all resources on the configured metadata connection, run or schedule:
 
 ```bash

@@ -9,6 +9,7 @@ use League\Flysystem\Filesystem;
 use League\Flysystem\PathPrefixing\PathPrefixedAdapter;
 use League\Flysystem\PhpseclibV3\ConnectionProvider;
 use League\Flysystem\PhpseclibV3\SftpAdapter;
+use League\Flysystem\UnableToCheckFileExistence;
 use League\Flysystem\UnableToWriteFile;
 use phpseclib3\Net\SFTP;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
@@ -18,11 +19,20 @@ beforeEach(function () {
     $this->remoteDirectories = [];
     $this->deletions = [];
     $this->failUploads = false;
+    $this->failDeletions = false;
+    $this->failVerification = false;
+    $this->failAfterDeletion = false;
     $connection = Mockery::mock(SFTP::class);
-    $connection->shouldReceive('is_file')->andReturnUsing(fn (string $path): bool => isset($this->remoteFiles[$path]));
-    $connection->shouldReceive('is_dir')->andReturnUsing(fn (string $path): bool => isset($this->remoteDirectories[$path]));
+    $connection->shouldReceive('is_file')->andReturnUsing(function (string $path): bool {
+        if ($this->failVerification) {
+            throw new RuntimeException('Connection lost during verification');
+        }
+
+        return isset($this->remoteFiles[$path]);
+    });
+    $connection->shouldReceive('is_dir')->andReturnUsing(fn (string $path): bool => isset($this->remoteDirectories[rtrim($path, '/')]));
     $connection->shouldReceive('mkdir')->andReturnUsing(function (string $path): bool {
-        $this->remoteDirectories[$path] = true;
+        $this->remoteDirectories[rtrim($path, '/')] = true;
 
         return true;
     });
@@ -41,20 +51,27 @@ beforeEach(function () {
     $connection->shouldReceive('delete')->andReturnUsing(function (string $path): bool {
         $this->deletions[] = $path;
 
+        if ($this->failDeletions) {
+            return false;
+        }
+
         foreach (array_keys($this->remoteFiles) as $file) {
             if ($file === $path || str_starts_with($file, rtrim($path, '/').'/')) {
                 unset($this->remoteFiles[$file]);
             }
-            foreach (array_keys($this->remoteDirectories) as $directory) {
-                if ($directory === rtrim($path, '/') || str_starts_with($directory, rtrim($path, '/').'/')) {
-                    unset($this->remoteDirectories[$directory]);
-                }
+        }
+
+        foreach (array_keys($this->remoteDirectories) as $directory) {
+            if ($directory === rtrim($path, '/') || str_starts_with($directory, rtrim($path, '/').'/')) {
+                unset($this->remoteDirectories[$directory]);
             }
         }
 
+        $this->failVerification = $this->failAfterDeletion;
+
         return true;
     });
-    $connection->shouldReceive('rmdir')->andReturn(true);
+    $connection->shouldReceive('rmdir')->andReturnUsing(fn (): bool => ! $this->failDeletions);
     $provider = Mockery::mock(ConnectionProvider::class);
     $provider->shouldReceive('provideConnection')->andReturn($connection);
 
@@ -93,6 +110,23 @@ it('isolates SFTP snapshots by remote root including reads and cleanup', functio
         ->and($this->deletions)->toContain("/remote/first/tenant/reports/{$first}".($directory ? '/' : ''));
 })->with([false, true]);
 
+it('retains SFTP retry records if post-delete verification loses its connection', function () {
+    $first = VersionedStorage::put('reports', 'original', disk: 'sftp-first');
+    $this->failAfterDeletion = true;
+
+    expect(fn () => VersionedStorage::put('reports', 'replacement', true, 'sftp-first'))
+        ->toThrow(UnableToCheckFileExistence::class)
+        ->and($this->remoteFiles)->not->toHaveKey("/remote/first/tenant/reports/{$first}")
+        ->and(DB::table('versioned_storage_versions')->where('version', $first)->value('pending_delete'))->toBe(1);
+
+    $this->failAfterDeletion = false;
+    $this->failVerification = false;
+    VersionedStorage::cleanup('reports', 'sftp-first');
+
+    expect(DB::table('versioned_storage_versions')->where('version', $first)->exists())->toBeFalse()
+        ->and(VersionedStorage::get('reports', disk: 'sftp-first'))->toBe('replacement');
+});
+
 it('removes rolled back SFTP snapshots from the selected root', function (bool $directory) {
     DB::beginTransaction();
 
@@ -122,3 +156,83 @@ it('propagates SFTP upload errors without publishing a version', function () {
         ->and(VersionedStorage::versions('reports', 'sftp-first'))->toBe([])
         ->and($this->remoteFiles)->toBe([]);
 });
+
+it('retains retry metadata and reports SFTP cleanup refusals', function (bool $directory) {
+    $write = fn (string $contents, bool $cleanup = false): string => $directory
+        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files) use ($contents): void {
+            $files->put('summary.txt', $contents);
+        }, $cleanup, 'sftp-first')
+        : VersionedStorage::put('reports', $contents, $cleanup, 'sftp-first');
+    $first = $write('original');
+    $this->failDeletions = true;
+    $error = null;
+
+    try {
+        $write('replacement', true);
+    } catch (RuntimeException $exception) {
+        $error = $exception;
+    }
+
+    $oldPath = "/remote/first/tenant/reports/{$first}".($directory ? '/summary.txt' : '');
+
+    expect($this->remoteFiles[$oldPath])->toBe('original')
+        ->and($directory
+            ? VersionedStorage::directory('reports', disk: 'sftp-first')->get('summary.txt')
+            : VersionedStorage::get('reports', disk: 'sftp-first'))->toBe('replacement')
+        ->and(DB::table('versioned_storage_versions')->where('version', $first)->value('pending_delete'))->toBe(1)
+        ->and($error)->toBeInstanceOf(RuntimeException::class);
+
+    $this->failDeletions = false;
+
+    if ($directory) {
+        VersionedStorage::directory('reports', disk: 'sftp-first')->cleanup();
+    } else {
+        VersionedStorage::cleanup('reports', 'sftp-first');
+    }
+
+    expect($this->remoteFiles)->not->toHaveKey($oldPath)
+        ->and(DB::table('versioned_storage_versions')->where('version', $first)->exists())->toBeFalse();
+})->with([false, true]);
+
+it('verifies removal of empty SFTP snapshot directories', function () {
+    $first = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->makeDirectory('empty');
+    }, disk: 'sftp-first');
+    $this->failDeletions = true;
+
+    expect(fn () => VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->put('summary.txt', 'replacement');
+    }, cleanup: true, disk: 'sftp-first'))
+        ->toThrow(RuntimeException::class, 'Unable to remove version')
+        ->and($this->remoteFiles)->toHaveCount(1)
+        ->and($this->remoteDirectories)->toHaveKey("/remote/first/tenant/reports/{$first}")
+        ->and(DB::table('versioned_storage_versions')->where('version', $first)->value('pending_delete'))->toBe(1);
+
+    $this->failDeletions = false;
+    VersionedStorage::directory('reports', disk: 'sftp-first')->cleanup();
+
+    expect($this->remoteDirectories)->not->toHaveKey("/remote/first/tenant/reports/{$first}")
+        ->and(DB::table('versioned_storage_versions')->where('version', $first)->exists())->toBeFalse()
+        ->and(VersionedStorage::directory('reports', disk: 'sftp-first')->get('summary.txt'))->toBe('replacement');
+});
+
+it('finishes SFTP cleanup when the pending snapshot is already physically absent', function (bool $directory) {
+    $version = $directory
+        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'original');
+        }, disk: 'sftp-first')
+        : VersionedStorage::put('reports', 'original', disk: 'sftp-first');
+    DB::table('versioned_storage_versions')->where('version', $version)->update(['pending_delete' => true]);
+    DB::table('versioned_storage_resources')->where('disk', 'sftp-first')->update(['current_version' => null]);
+    $this->remoteFiles = [];
+    $this->remoteDirectories = [];
+    $this->failDeletions = true;
+
+    if ($directory) {
+        VersionedStorage::directory('reports', disk: 'sftp-first')->cleanup();
+    } else {
+        VersionedStorage::cleanup('reports', 'sftp-first');
+    }
+
+    expect(DB::table('versioned_storage_versions')->where('version', $version)->exists())->toBeFalse();
+})->with([false, true]);

@@ -60,7 +60,7 @@ Snapshot copy/move operations follow Laravel's visibility configuration, includi
 
 ### 4. Coordinate cleanup and transactions
 
-- Pass `cleanup: true` to retire previous versions. Failed deletions keep durable retry records; the new version remains current.
+- Pass `cleanup: true` to retire previous versions. Snapshot removal verifies that the path is absent before discarding metadata; failed deletions or verification errors keep durable retry records, and the new version remains current. This adds filesystem existence checks, including remote requests on remote disks.
 - Run or schedule `php artisan laravel-versioned-storage:cleanup` to retry pending deletions across resources. It fails explicitly if any deletion still fails.
 - Laravel-managed outer transactions defer cleanup until the outermost commit. Rollback removes staged versions and preserves the previous version.
 - A failing transaction-beginning listener rolls back only the package operation's newly opened transaction or savepoint, preserving existing outer transaction work.

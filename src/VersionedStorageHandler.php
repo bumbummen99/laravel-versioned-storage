@@ -369,7 +369,7 @@ class VersionedStorageHandler
 
         $deleted = $this->directory ? $filesystem->deleteDirectory($path) : $filesystem->delete($path);
 
-        if (! $deleted) {
+        if (! $deleted || $filesystem->exists($path)) {
             throw new RuntimeException("Unable to remove version [{$version}] of [{$this->path}].", 0, $previous);
         }
     }
