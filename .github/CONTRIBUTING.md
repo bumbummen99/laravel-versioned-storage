@@ -50,13 +50,10 @@ composer test
 - `tests/ArchTest.php`: architecture constraints, separate from runtime integration tests.
 - `tests/Support`: fixtures and subprocess helpers, not a test suite.
 
-Run individual categories or all Pest suites:
+Run all Pest tests without the additional quality checks:
 
 ```bash
 composer test:unit
-composer test:feature
-composer test:specification
-composer test:pest
 ```
 
-`composer test` runs static analysis, formatting checks, type coverage, and all Pest suites. `composer test:unit` runs only the Unit suite.
+`composer test` runs static analysis, formatting checks, type coverage, and all Pest suites. `composer test:unit` runs all Pest suites without the additional quality checks.
