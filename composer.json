@@ -44,6 +44,7 @@
     },
     "autoload-dev": {
         "psr-4": {
+            "SkyRaptor\\LaravelVersionedStorage\\Benchmarks\\": "benchmarks/",
             "SkyRaptor\\LaravelVersionedStorage\\Tests\\": "tests/",
             "Workbench\\App\\": "workbench/app/",
             "Workbench\\Database\\Factories\\": "workbench/database/factories/",
@@ -52,7 +53,8 @@
     },
     "scripts": {
         "benchmark": [
-            "vendor/bin/phpbench run --report=aggregate"
+            "Composer\\Config::disableProcessTimeout",
+            "@php benchmarks/compare.php"
         ],
         "post-autoload-dump": [
             "@clear",

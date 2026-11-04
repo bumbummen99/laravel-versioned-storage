@@ -1,0 +1,61 @@
+<?php
+
+gc_disable();
+ob_start();
+
+$bootstrap = '{{ bootstrap }}';
+if ($bootstrap !== '') {
+    (static function (string $path): void {
+        require_once $path;
+    })($bootstrap);
+}
+
+require_once '{{ file }}';
+
+$class = '{{ class }}';
+$benchmark = new $class;
+$parameters = array_map(
+    static fn ($value) => is_array($value) ? $value : unserialize($value),
+    {{ parameters }},
+);
+
+foreach ({{ beforeMethods }} as $method) {
+    $benchmark->$method($parameters);
+}
+
+for ($i = 0; $i < {{ warmup }}; $i++) {
+    $benchmark->{{ subject }}($parameters);
+}
+
+if ($parameters) {
+    $start = hrtime(true);
+    for ($i = 0; $i < {{ revolutions }}; $i++) {
+        $benchmark->{{ subject }}($parameters);
+    }
+    $elapsed = hrtime(true) - $start;
+} else {
+    $start = hrtime(true);
+    for ($i = 0; $i < {{ revolutions }}; $i++) {
+        $benchmark->{{ subject }}();
+    }
+    $elapsed = hrtime(true) - $start;
+}
+
+foreach ({{ afterMethods }} as $method) {
+    $benchmark->$method($parameters);
+}
+
+$buffer = ob_get_clean();
+
+echo serialize([
+    'mem' => [
+        'peak' => memory_get_peak_usage(),
+        'final' => memory_get_usage(),
+        'real' => memory_get_usage(true),
+    ],
+    'time' => [
+        'revs' => {{ revolutions }},
+        'net' => (int) ($elapsed / 1000),
+    ],
+    'buffer' => $buffer,
+]);

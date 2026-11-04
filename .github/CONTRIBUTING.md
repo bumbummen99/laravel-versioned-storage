@@ -60,27 +60,28 @@ composer test:unit
 
 ## Benchmarks
 
-Run the local PHPBench scenarios:
+Compare the previous commit (`HEAD^`) against the current working tree, including uncommitted changes:
 
 ```bash
 composer benchmark
 ```
 
+The command creates a temporary baseline worktree, benchmarks both versions using the current harness and dependencies, prints the comparison, and removes the worktree even if benchmarking fails. Results remain under the ignored `build/phpbench` directory. Set `VERSIONED_STORAGE_BENCHMARK_BASE` to choose another baseline, such as `HEAD` to measure only uncommitted changes. PHPBench options are forwarded to both runs, for example `composer benchmark -- --filter=benchReadFile`.
+
 The benchmarks use an in-memory SQLite database and a local fake disk. Each iteration starts with fresh fixtures; application boot, migrations, fixture creation, and teardown are outside the timed operation. Subjects cover file reads, existence checks, version listing, new resource registration, file/directory writes, directory child reads, and replacements with cleanup. They measure local package overhead, not remote-server latency. Peak memory includes the bootstrapped application.
+
+Each scenario uses 10 iterations, with repetitions tuned to its workload:
+
+| Scenarios | Measured operations per iteration | Warmup operations per iteration |
+| --- | ---: | ---: |
+| Reads, existence checks, version listing | 1,000 | 20 |
+| Replacement with cleanup (file and directory) | 100 | 10 |
+| Writes without cleanup and resource registration | 10 | 2 |
+
+This uses 180 measurement subprocesses across nine scenarios and both revisions, down from 900 at 50 iterations. Longer read and cleanup samples amortize setup overhead and reduce sensitivity to brief interruptions. Cleanup keeps one current version between operations; growing write and registration workloads retain their previous sample size so larger repetition counts do not change their scale. Those short write samples remain more sensitive to noise. The full comparison measures 84,600 operations; operation counts differ from earlier harness settings, so regenerate both baseline and current measurements rather than comparing against old stored runs.
 
 The `benchmarks` pull-request workflow automatically compares the PR target SHA (`pull_request.base.sha`) with the PR head SHA (`pull_request.head.sha`), not GitHub's synthetic merge commit. Both runs use the head revision's benchmark harness and installed dependencies on the same runner, but load package classes and migrations from their respective checkouts. This isolates package-code changes; it does not compare separate dependency upgrades. Benchmark failures fail the job, while timing differences are informational rather than pass/fail thresholds. Open the **compare** job's summary from the PR's benchmarks check to see the measurements and differences.
 
-To compare two revisions locally without changing your working files:
+PHPBench uses repeated iterations and warmups, but local and shared-runner timing still varies; small differences are not evidence of a regression.
 
-```bash
-git worktree add --detach build/benchmark-base HEAD^
-
-VERSIONED_STORAGE_BENCHMARK_SOURCE="$PWD/build/benchmark-base" XDEBUG_MODE=off \
-  vendor/bin/phpbench run --store --tag=local_base
-
-XDEBUG_MODE=off vendor/bin/phpbench run --ref=local_base --report=aggregate
-
-git worktree remove build/benchmark-base
-```
-
-Use the desired baseline revision in place of `HEAD^`. The second run measures the current working tree, including uncommitted changes. Results are stored under the ignored `build/phpbench` directory. PHPBench uses repeated iterations and warmups, but shared-runner timing still varies; small differences are not evidence of a regression. The deterministic SQL/filesystem call-budget tests continue running separately in `composer test`.
+The configured remote executor uses a project-local template with PHP's monotonic `hrtime()` clock instead of wall-clock time, so clock corrections cannot produce negative durations. Results are converted from nanoseconds to PHPBench's microsecond units. Process isolation, lifecycle hooks, warmups, and memory reporting remain enabled for both revisions.

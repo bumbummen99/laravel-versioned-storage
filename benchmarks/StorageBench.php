@@ -34,16 +34,22 @@ final class StorageBench
         $this->environment->shutdown();
     }
 
+    #[Bench\Revs(1000)]
+    #[Bench\Warmup(20)]
     public function benchReadFile(): void
     {
         VersionedStorage::get('file.txt');
     }
 
+    #[Bench\Revs(1000)]
+    #[Bench\Warmup(20)]
     public function benchFileExists(): void
     {
         VersionedStorage::exists('file.txt');
     }
 
+    #[Bench\Revs(1000)]
+    #[Bench\Warmup(20)]
     public function benchListVersions(): void
     {
         VersionedStorage::versions('file.txt');
@@ -59,6 +65,8 @@ final class StorageBench
         VersionedStorage::put('new-file-'.++$this->resource, str_repeat('x', 1024));
     }
 
+    #[Bench\Revs(1000)]
+    #[Bench\Warmup(20)]
     public function benchReadDirectoryChild(): void
     {
         VersionedStorage::directory('reports')->get('summary.txt');
@@ -71,11 +79,15 @@ final class StorageBench
         });
     }
 
+    #[Bench\Revs(100)]
+    #[Bench\Warmup(10)]
     public function benchReplaceAndCleanupFile(): void
     {
         VersionedStorage::put('file.txt', str_repeat('x', 1024), cleanup: true);
     }
 
+    #[Bench\Revs(100)]
+    #[Bench\Warmup(10)]
     public function benchReplaceAndCleanupDirectory(): void
     {
         VersionedStorage::directory('reports', static function (FilesystemAdapter $files): void {

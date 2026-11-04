@@ -24,7 +24,7 @@ final class StorageEnvironment extends Application
             throw new RuntimeException($kernel->output());
         }
 
-        Storage::fake('benchmark');
+        Storage::set('benchmark', Storage::fake('benchmark-'.bin2hex(random_bytes(8))));
         config()->set('filesystems.default', 'benchmark');
     }
 

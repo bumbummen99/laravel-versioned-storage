@@ -1,4 +1,14 @@
 {
+    "core.extensions": [
+        "SkyRaptor\\LaravelVersionedStorage\\Benchmarks\\MonotonicExtension"
+    ],
+    "runner.executors": {
+        "monotonic": {
+            "executor": "monotonic",
+            "safe_parameters": true
+        }
+    },
+    "runner.executor": "monotonic",
     "runner.bootstrap": "benchmarks/bootstrap.php",
     "runner.path": "benchmarks/StorageBench.php",
     "runner.php_config": {
