@@ -116,7 +116,7 @@ class VersionedStorageHandler
 
             $callback($filesystem, $version);
         } catch (Throwable $exception) {
-            $this->removeVersion($version, $exception);
+            $this->discardFailedWrite($version, $exception);
 
             throw $exception;
         }
@@ -128,7 +128,7 @@ class VersionedStorageHandler
             if ($this->versionQuery()->where('version', $version)->exists()) {
                 $this->deferIfTransactional($version);
             } else {
-                $this->removeVersion($version, $exception);
+                $this->discardFailedWrite($version, $exception);
             }
 
             throw $exception;
@@ -359,6 +359,19 @@ class VersionedStorageHandler
 
                 throw $recoveryException;
             }
+
+            throw $exception;
+        }
+    }
+
+    private function discardFailedWrite(string $version, Throwable $previous): void
+    {
+        try {
+            $this->removeVersion($version, $previous);
+        } catch (Throwable $exception) {
+            report($previous);
+            report($exception);
+            app(VersionedStorageTransactions::class)->retainFailedDiscard($this->connection(), $this, $version);
 
             throw $exception;
         }

@@ -107,6 +107,113 @@ it('does not publish failed filesystem writes even on a non-throwing disk', func
         ->and(DB::table('versioned_storage_resources')->value('current_version'))->toBeNull();
 });
 
+it('can retry staged snapshot deletion after both a directory callback and its cleanup fail', function (string $outer) {
+    $first = VersionedStorage::directory('callback-retry', function (FilesystemAdapter $files): void {
+        $files->put('one', 'original');
+    });
+    $disk = Storage::disk('local');
+    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    $adapter->shouldReceive('deleteDirectory')->once()
+        ->andThrow(new RuntimeException('snapshot deletion refused'));
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, $disk->getConfig()));
+
+    if ($outer !== 'none') {
+        DB::beginTransaction();
+        DB::beginTransaction();
+    }
+
+    try {
+        expect(fn () => VersionedStorage::directory('callback-retry', function (FilesystemAdapter $files): void {
+            $files->put('one', 'incomplete');
+
+            throw new RuntimeException('callback failed');
+        }, cleanup: true))->toThrow(RuntimeException::class, 'snapshot deletion refused');
+    } finally {
+        Storage::set('local', $disk);
+    }
+
+    $staged = array_values(array_diff($disk->directories('callback-retry'), ["callback-retry/{$first}"]));
+    expect($staged)->toHaveCount(1)
+        ->and(VersionedStorage::directory('callback-retry')->versions())->toBe([$first])
+        ->and(VersionedStorage::directory('callback-retry')->get('one'))->toBe('original')
+        ->and($disk->get($staged[0].'/one'))->toBe('incomplete');
+
+    if ($outer !== 'none') {
+        DB::rollBack();
+
+        if ($outer === 'commit') {
+            DB::commit();
+        } else {
+            DB::rollBack();
+        }
+    }
+
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+
+    $disk->assertMissing($staged[0]);
+    $disk->assertExists("callback-retry/{$first}/one");
+    expect(VersionedStorage::directory('callback-retry')->get('one'))->toBe('original');
+})->with(['none', 'commit', 'rollback']);
+
+it('can retry staged snapshot deletion after publication and its cleanup fail', function (bool $directory, bool $newResource, string $outer) {
+    $write = static fn (string $contents): string => $directory
+        ? VersionedStorage::directory('publication-retry', function (FilesystemAdapter $files) use ($contents): void {
+            $files->put('one', $contents);
+        }, cleanup: true)
+        : VersionedStorage::put('publication-retry', $contents, cleanup: true);
+    $first = $newResource ? null : $write('original');
+    $disk = Storage::disk('local');
+    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    $adapter->shouldReceive($directory ? 'deleteDirectory' : 'delete')->once()
+        ->andThrow(new RuntimeException('snapshot deletion refused'));
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, $disk->getConfig()));
+    $connection = DB::connection();
+    $connection->statement("CREATE TRIGGER reject_storage_version BEFORE INSERT ON versioned_storage_versions WHEN NEW.pending_delete = 0 BEGIN SELECT RAISE(FAIL, 'publication failed'); END");
+
+    if ($outer !== 'none') {
+        DB::beginTransaction();
+        DB::beginTransaction();
+    }
+
+    try {
+        expect(fn () => $write('unpublished'))->toThrow(RuntimeException::class, 'snapshot deletion refused');
+    } finally {
+        Storage::set('local', $disk);
+
+        if ($outer !== 'none') {
+            DB::rollBack();
+
+            if ($outer === 'commit') {
+                DB::commit();
+            } else {
+                DB::rollBack();
+            }
+        }
+
+        $connection->statement('DROP TRIGGER reject_storage_version');
+    }
+
+    $expected = $first === null ? [] : [$first];
+    expect($directory
+        ? VersionedStorage::directory('publication-retry')->versions()
+        : VersionedStorage::versions('publication-retry'))->toBe($expected);
+    $pending = DB::table('versioned_storage_versions')->where('pending_delete', true)->pluck('version')->all();
+    expect($pending)->toHaveCount(1)
+        ->and(DB::table('versioned_storage_reservations')->where('version', $pending[0])->exists())->toBeTrue();
+    $disk->assertExists('publication-retry/'.$pending[0]);
+
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+
+    $disk->assertMissing('publication-retry/'.$pending[0]);
+    expect(DB::table('versioned_storage_versions')->where('pending_delete', true)->exists())->toBeFalse();
+
+    if ($first !== null) {
+        expect($directory
+            ? VersionedStorage::directory('publication-retry')->get('one')
+            : VersionedStorage::get('publication-retry'))->toBe('original');
+    }
+})->with([false, true])->with([false, true])->with(['none', 'commit', 'rollback']);
+
 it('removes a staged version if its database publication fails', function () {
     $first = VersionedStorage::put('file', 'original');
     $connection = DB::connection();

@@ -94,6 +94,15 @@ class VersionedStorageTransactions
         }
     }
 
+    public function retainFailedDiscard(Connection $connection, VersionedStorageHandler $handler, string $version): void
+    {
+        $this->failedDiscards[spl_object_id($connection)][] = [
+            'handler' => $handler,
+            'version' => $version,
+        ];
+        $this->retainFailedDiscards($connection);
+    }
+
     private function retainFailedDiscards(Connection $connection): void
     {
         $id = spl_object_id($connection);
