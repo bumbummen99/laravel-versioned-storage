@@ -390,6 +390,16 @@ class VersionedStorageHandler
 
     private function sharesFilesystem(string $disk): bool
     {
-        return Storage::disk($disk)->getAdapter() === $this->diskFilesystem->getAdapter();
+        try {
+            return Storage::disk($disk)->getAdapter() === $this->diskFilesystem->getAdapter();
+        } catch (InvalidArgumentException $exception) {
+            // Resolve first so aliases registered with Storage::set() still participate.
+            if (! empty(config("filesystems.disks.{$disk}.driver"))
+                || $exception->getMessage() !== "Disk [{$disk}] does not have a configured driver.") {
+                throw $exception;
+            }
+
+            return false;
+        }
     }
 }

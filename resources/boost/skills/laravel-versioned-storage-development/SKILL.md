@@ -48,6 +48,8 @@ The directory callback receives a scoped Laravel `FilesystemAdapter`. All files 
 
 Each resource must exclusively own its physical version container, whose immediate entries are only that resource's UUID versions. Never share a container between disk names, logical paths, or file and directory resources. Nested disk roots are allowed when resource containers remain separate; do not place a resource inside another resource's container or snapshot. Developers must ensure exclusivity across disk configurations and external writes; automatic detection of every physical overlap is not guaranteed. Existing guards reject separate resources with identical or nested logical roots sharing a Flysystem adapter before writing, including file/directory mixing and disk aliases. Further versions of the same resource remain allowed. UUIDs in logical paths and arbitrary nested callback contents remain allowed.
 
+Retired disks without a configured driver or registered instance do not block independent disks' registration or cleanup; their metadata and files remain untouched. Explicitly targeting a retired disk still fails, as do resolution errors from configured disks.
+
 Scoped public and temporary download URLs retain the selected disk's URL behavior and target the specific snapshot. External URL reads are not protected against cleanup. Temporary upload URLs are rejected: `providesTemporaryUploadUrls()` returns `false` and `temporaryUploadUrl()` throws, even with custom upload URL builders. Write all snapshot contents before the callback returns.
 
 Files use `<path>/<version>`; directory children use `<directory>/<version>/<child>`. Read through this API rather than through `Storage::get($logicalPath)`.

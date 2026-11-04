@@ -57,6 +57,66 @@ it('rejects overlapping resources registered through a second disk name for the 
     }
 });
 
+it('does not require a retired disk to register the same logical path on an independent disk', function () {
+    $retiredDisk = Storage::fake('retired-disk');
+    config()->set('filesystems.disks.retired-disk', [
+        'driver' => 'local',
+        'root' => $retiredDisk->path(''),
+    ]);
+    $retiredVersion = VersionedStorage::put('reports/summary.txt', 'archived contents', disk: 'retired-disk');
+    config()->set('filesystems.disks.retired-disk', null);
+    Storage::forgetDisk('retired-disk');
+
+    $activeVersion = VersionedStorage::put('reports/summary.txt', 'active contents', disk: 'local');
+
+    expect(VersionedStorage::get('reports/summary.txt', $activeVersion, 'local'))->toBe('active contents')
+        ->and(VersionedStorage::versions('reports/summary.txt', 'local'))->toBe([$activeVersion])
+        ->and($retiredDisk->get("reports/summary.txt/{$retiredVersion}"))->toBe('archived contents')
+        ->and(DB::table('versioned_storage_resources')->where('disk', 'retired-disk')->value('current_version'))
+        ->toBe($retiredVersion);
+
+    expect(fn () => VersionedStorage::get('reports/summary.txt', disk: 'retired-disk'))
+        ->toThrow(InvalidArgumentException::class, 'Disk [retired-disk] does not have a configured driver.');
+});
+
+it('does not require a retired independent disk to clean up directory snapshots', function () {
+    $first = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->put('summary.txt', 'original contents');
+    });
+    $retiredDisk = Storage::fake('retired-disk');
+    $retiredPath = "reports/{$first}/independent";
+    $retiredVersion = VersionedStorage::put($retiredPath, 'archived contents', disk: 'retired-disk');
+    Storage::forgetDisk('retired-disk');
+
+    $second = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->put('summary.txt', 'replacement contents');
+    }, cleanup: true);
+
+    expect(VersionedStorage::directory('reports')->versions())->toBe([$second])
+        ->and(VersionedStorage::directory('reports')->get('summary.txt'))->toBe('replacement contents')
+        ->and($retiredDisk->get("{$retiredPath}/{$retiredVersion}"))->toBe('archived contents')
+        ->and(DB::table('versioned_storage_resources')->where('disk', 'retired-disk')->value('current_version'))
+        ->toBe($retiredVersion);
+    Storage::disk('local')->assertMissing("reports/{$first}");
+});
+
+it('surfaces resolution errors from configured disks during overlap checks', function (string $driver) {
+    Storage::fake('broken-disk');
+    VersionedStorage::put('reports', 'archived contents', disk: 'broken-disk');
+    Storage::forgetDisk('broken-disk');
+    config()->set('filesystems.disks.broken-disk', ['driver' => $driver]);
+    Storage::extend('failing-driver', function (): never {
+        throw new InvalidArgumentException('Disk [broken-disk] does not have a configured driver.');
+    });
+
+    expect(fn () => VersionedStorage::put('reports', 'active contents'))
+        ->toThrow(InvalidArgumentException::class, $driver === 'failing-driver'
+            ? 'Disk [broken-disk] does not have a configured driver.'
+            : 'Driver [unsupported-driver] is not supported.');
+
+    expect(DB::table('versioned_storage_resources')->where('disk', 'local')->exists())->toBeFalse();
+})->with(['unsupported-driver', 'failing-driver']);
+
 it('rejects the same resource root registered through a disk alias', function (bool $directory) {
     $local = Storage::disk('local');
     Storage::set('local-alias', $local);

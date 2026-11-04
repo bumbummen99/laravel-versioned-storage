@@ -119,6 +119,8 @@ Nested disk roots are allowed. For example, disk `main` rooted at `/storage` can
 
 Developers are responsible for keeping these containers exclusive across disk configurations, application installations, and external writes. The package does not promise to detect every physical overlap across filesystem drivers. Existing overlap guards are safeguards, not support for sharing or merging containers: separate resources with identical or nested logical roots sharing a Flysystem adapter are rejected with an `InvalidArgumentException` before writing or invoking a callback. This includes switching between file and directory APIs at the same root or registering that root through a disk alias. Further versions of the same resource remain allowed. UUIDs in logical paths and arbitrary files and subdirectories within a directory snapshot remain allowed.
 
+Metadata for a retired disk with no configured driver or registered instance does not block registration or cleanup on independent disks. Its metadata and files remain untouched. Operations explicitly targeting that disk still fail, and resolution errors from configured disks are not ignored.
+
 ### Cleanup and Errors
 
 Pass `cleanup: true` to `put()` or `directory()` to remove all previously published versions of that resource, both from the database and from the filesystem. Other resources and unregistered files are left untouched.
