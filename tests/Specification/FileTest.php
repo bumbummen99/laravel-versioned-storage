@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 /**
@@ -84,6 +85,20 @@ it('Can cleanup previous single file versions', function () use ($create, $verif
             $verify($file, 'File '.($index + 1), $version);
         }
     }
+});
+
+it('Retires file revisions and leaves physical deletion to the cleanup command', function () {
+    $old = VersionedStorage::put('reports/daily.csv', 'original');
+    $current = VersionedStorage::put('reports/daily.csv', 'replacement', cleanup: true);
+
+    expect(VersionedStorage::versions('reports/daily.csv'))->toBe([$current])
+        ->and(VersionedStorage::exists('reports/daily.csv', $old))->toBeFalse();
+    Storage::disk('local')->assertExists("reports/daily.csv/{$old}");
+
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+
+    Storage::disk('local')->assertMissing("reports/daily.csv/{$old}");
+    expect(VersionedStorage::get('reports/daily.csv'))->toBe('replacement');
 });
 
 it('Can list available single file versions', function () use ($create) {

@@ -62,11 +62,17 @@ Snapshot copy/move operations follow Laravel's visibility configuration, includi
 
 ### 4. Coordinate cleanup and transactions
 
-- Pass `cleanup: true` to retire previous versions. Snapshot removal verifies that the path is absent before discarding metadata; failed deletions or verification errors keep durable retry records, and the new version remains current. This adds filesystem existence checks, including remote requests on remote disks.
+- Pass `cleanup: true` to hide previous versions transactionally. Only the cleanup command (or explicitly invoked resource-specific cleanup APIs) deletes retired snapshots; writes, commits, and application termination do not automatically clean up.
+- Snapshot removal verifies absence before discarding metadata, adding filesystem existence checks (remote requests on remote disks). Failed deletions retain pending records. Explicit `cleanup()` APIs run synchronously and throw on failure; cleanup refuses active metadata transactions.
 - Run or schedule `php artisan laravel-versioned-storage:cleanup` to retry pending deletions across resources. It fails explicitly if any deletion still fails.
-- Laravel-managed outer transactions defer cleanup until the outermost commit. Rollback removes staged versions and preserves the previous version.
+- The command uses ID-ordered chunks (default `--chunk=10`) and Laravel `Concurrency::run()`, then one bulk metadata DELETE per chunk for verified successes. Failures stay pending and later chunks continue. Workers perform filesystem work only; chunk loading and directory ownership validation still read metadata.
+- Laravel's configured concurrency driver is used (`process` by default). Named disks/custom drivers must be configured identically in worker applications. Runtime-only disks require an explicit suitable driver such as `sync` (sequential); `fork` requires optional `spatie/fork`, CLI/`pcntl`, and fork-safe connections. There is no silent fallback.
+- In the application's `routes/console.php`, use `Schedule::command('laravel-versioned-storage:cleanup')->everyFiveMinutes()->withoutOverlapping()` with `Illuminate\Support\Facades\Schedule`. Ensure Laravel's scheduler is running; failed deletions remain pending for the next attempt.
+- Laravel-managed outer transactions commit retirement flags only at the outermost commit. Rollback restores retirement flags, preserves the previous version, and immediately attempts staged-snapshot deletion.
+- Schedule the cleanup command for periodic physical deletion; no automatic termination cleanup or queue worker is used. Command disks must be available in the command's application configuration.
+- Failed rollback deletions raise errors and create hidden pending-deletion records for the cleanup APIs/command, reserving their UUIDs. Nested recovery becomes durable when the outer transaction finishes; it requires a writable metadata database and cannot survive process termination before that boundary.
 - A failing transaction-beginning listener rolls back only the package operation's newly opened transaction or savepoint, preserving existing outer transaction work.
-- Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Cleanup waits for active reads; already retired versions are unavailable to new reads.
+- Current and explicit-version `get()`/`exists()` hold resource locks through the filesystem read. Publication waits for existing readers before committing retirement; the command then deletes irreversibly retired snapshots without holding DB locks during worker I/O. Never manually revive retired metadata.
 - Keep transactions short: locks acquired inside an outer transaction last until it finishes. SQLite uses database-wide write locking.
 - Metadata reads use the primary database, not read replicas. Handlers and deferred transaction work retain their originally resolved filesystem instance.
 - First registrations reserve roots under a shared database lock; this protects existing overlap guards, not arbitrary physical overlap detection. Failed writes can leave an empty reservation. Outer transactions retain registration locks until they finish.

@@ -96,6 +96,7 @@ it('isolates SFTP snapshots by remote root including reads and cleanup', functio
     $other = $write('sftp-second', 'other');
     $replacement = $write('sftp-first', 'replacement', true);
     $suffix = $directory ? '/nested/summary.txt' : '';
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     expect($directory
         ? VersionedStorage::directory('reports', disk: 'sftp-first')->get('nested/summary.txt')
@@ -114,7 +115,8 @@ it('retains SFTP retry records if post-delete verification loses its connection'
     $first = VersionedStorage::put('reports', 'original', disk: 'sftp-first');
     $this->failAfterDeletion = true;
 
-    expect(fn () => VersionedStorage::put('reports', 'replacement', true, 'sftp-first'))
+    VersionedStorage::put('reports', 'replacement', true, 'sftp-first');
+    expect(fn () => VersionedStorage::cleanup('reports', 'sftp-first'))
         ->toThrow(UnableToCheckFileExistence::class)
         ->and($this->remoteFiles)->not->toHaveKey("/remote/first/tenant/reports/{$first}")
         ->and(DB::table('versioned_storage_versions')->where('version', $first)->value('pending_delete'))->toBe(1);
@@ -169,6 +171,9 @@ it('retains retry metadata and reports SFTP cleanup refusals', function (bool $d
 
     try {
         $write('replacement', true);
+        $directory
+            ? VersionedStorage::directory('reports', disk: 'sftp-first')->cleanup()
+            : VersionedStorage::cleanup('reports', 'sftp-first');
     } catch (RuntimeException $exception) {
         $error = $exception;
     }
@@ -200,9 +205,10 @@ it('verifies removal of empty SFTP snapshot directories', function () {
     }, disk: 'sftp-first');
     $this->failDeletions = true;
 
-    expect(fn () => VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+    VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
         $files->put('summary.txt', 'replacement');
-    }, cleanup: true, disk: 'sftp-first'))
+    }, cleanup: true, disk: 'sftp-first');
+    expect(fn () => VersionedStorage::directory('reports', disk: 'sftp-first')->cleanup())
         ->toThrow(RuntimeException::class, 'Unable to remove version')
         ->and($this->remoteFiles)->toHaveCount(1)
         ->and($this->remoteDirectories)->toHaveKey("/remote/first/tenant/reports/{$first}")

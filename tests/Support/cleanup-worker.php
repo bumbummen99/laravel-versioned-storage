@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Orchestra\Testbench\Foundation\Application;
@@ -66,4 +67,11 @@ if ($directory === 'register') {
     VersionedStorage::put('protected', 'replacement', true);
 }
 
+if (in_array($directory, ['directory', 'file'], true)) {
+    config()->set('concurrency.default', 'sync');
+
+    if (Artisan::call('laravel-versioned-storage:cleanup') !== 0) {
+        throw new RuntimeException(Artisan::output());
+    }
+}
 fwrite(STDOUT, "finished\n");

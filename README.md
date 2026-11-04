@@ -123,7 +123,7 @@ Metadata for a retired disk with no configured driver or registered instance doe
 
 ### Cleanup and Errors
 
-Pass `cleanup: true` to `put()` or `directory()` to remove all previously published versions of that resource, both from the database and from the filesystem. Other resources and unregistered files are left untouched.
+Pass `cleanup: true` to `put()` or `directory()` to retire all previously published versions of that resource. They become unavailable through the package API immediately within the transaction; physical deletion is left to the cleanup command. Other resources and unregistered files are left untouched.
 
 Writes complete before the current-version pointer is changed in a database transaction. Concurrent publications of the same resource are serialized through a persistent database row; filesystem writes themselves do not hold that lock. Failed writes or callbacks are not published, and their staged data is removed. Missing versions return `false` from `exists()` and raise an exception from `get()`. Filesystem and database failures also raise exceptions.
 
@@ -133,12 +133,16 @@ Version UUIDs are reserved atomically in the metadata database before touching t
 
 Existing installations must publish and run the new reservations migration before using this behavior; pause package writers during the upgrade. The migration reserves all versions already present in the metadata tables. Previously deleted version identifiers cannot be recovered or backfilled.
 
-Cleanup runs after publication commits. If deleting an old version fails, an exception is raised but the new version remains current. Old versions are marked for deletion transactionally and hidden from public reads/lists; their database records are retained until physical deletion succeeds. Cleanup continues attempting other deletions when one fails. A subsequent write retries pending deletions, or you can retry without creating a new version:
+Old versions are marked for deletion in the publication transaction and hidden from public reads/lists. Writes, transaction commits, and application termination never automatically delete retired snapshots. Run or schedule the cleanup command to remove them. It selects committed pending-deletion records, continues attempting other deletions after failures, and retains failed records for retry.
+
+To delete pending snapshots synchronously without publishing another version:
 
 ```php
 VersionedStorage::cleanup('reports/daily.csv');
 VersionedStorage::directory('reports/monthly')->cleanup();
 ```
+
+These explicit APIs remain available for manual resource-specific cleanup and throw on failure. Cleanup refuses to run inside an active metadata transaction rather than deleting uncommitted data or controlling the application's transaction. Upload and publication failures still throw from `put()`/`directory()`; physical deletion of retired revisions is not part of publication.
 
 Snapshot removal includes a post-delete existence check before its metadata is discarded. If the path remains, or verification throws, cleanup fails and retains the pending-deletion record. This also catches adapters that silently ignore a server's deletion refusal. Verification adds filesystem existence checks to snapshot removal, including remote requests for remote disks.
 
@@ -150,11 +154,37 @@ php artisan laravel-versioned-storage:cleanup
 
 The command returns a failure exit code if any deletion still fails. It also recovers committed cleanup work left by a process that stopped before deleting the files.
 
+The command loads revisions in ID-ordered chunks and deletes snapshots concurrently through Laravel's `Concurrency::run()`. The default chunk size is 10, bounding the number of concurrent tasks. To change it:
+
+```bash
+php artisan laravel-versioned-storage:cleanup --chunk=20
+```
+
+Each worker deletes and verifies one snapshot, returning its result without updating package metadata. The parent removes confirmed successes with one bulk database `DELETE` per chunk (none if every deletion failed). Chunk loading and directory ownership checks still require reads; this is not one total database query per chunk. Failed or uncertain deletions stay pending, and failures in an early chunk do not block later chunks. A run is bounded by the highest pending revision ID observed at startup; newly created revisions can wait for the next run. If a worker/process or database update fails after files were deleted, the next run safely reconciles the already-absent snapshots.
+
+The configured Laravel concurrency driver is used (`process` by default). Process workers boot independent applications: use named disks configured identically in the worker application, including custom driver registration and credentials. Missing disks or configuration mismatches fail explicitly and retain metadata. Runtime-only disks are not automatically transferred; use Laravel's explicit `sync` driver when same-process storage is required (this disables parallel execution). The optional `fork` driver requires `spatie/fork`, CLI/`pcntl`, and fork-safe adapters/connections; arbitrary in-memory or inherited remote-connection disks are not guaranteed safe. No concurrency failure silently switches to sequential execution.
+
+Committed retirement is irreversible through the package APIs. Publication takes the resource lock before marking versions pending, waiting for existing protected readers to finish; later readers cannot select retired versions. Therefore command workers can delete retired snapshots without holding database locks during remote I/O. Current revisions are excluded, legacy nested-resource checks remain in place, and the final bulk delete rechecks retirement/current-version metadata. Resource-specific cleanup APIs retain their existing sequential locking behavior.
+
+For periodic retries, add this schedule to your application's `routes/console.php`:
+
+```php
+use Illuminate\Support\Facades\Schedule;
+
+Schedule::command('laravel-versioned-storage:cleanup')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
+```
+
+Ensure Laravel's scheduler is running, typically through a cron entry invoking `php artisan schedule:run` every minute. Failed deletions remain pending for the next scheduled attempt.
+
 If legacy metadata already registers another resource inside a version directory, deletion of that directory fails explicitly and retains its pending-deletion record. Move or resolve the conflicting resource before retrying cleanup; it is not deleted automatically.
 
 ### Transactions and Concurrent Reads
 
-Writes inside Laravel-managed transactions on the metadata connection are supported. Cleanup waits for the outermost commit, including nested savepoint commits. Rolling back removes newly staged files and restores the previous current version without deleting its contents. Exceptions thrown after the database commits are propagated, but do not cause the committed current version to be deleted. If an application after-commit callback prevents automatic cleanup from running, the durable pending-deletion records remain available to the retry command.
+Writes inside Laravel-managed transactions on the metadata connection are supported. Retirement flags become durable only after the outermost commit, including nested savepoint commits. Rolling back restores the previous current version and its retirement flags, without deleting its contents. Removal of newly staged snapshots during rollback remains immediate and can throw on failure; it is separate from command-driven old-version cleanup. Exceptions thrown by application callbacks after the database commits are propagated, but do not cause the committed current version to be deleted.
+
+If deleting a rolled-back snapshot fails, the error is propagated and the snapshot is recorded as pending deletion, never as a published version. Retry with the cleanup APIs or command after restoring filesystem access. Recovery reserves the UUID and may recreate an empty resource reservation; these extra database writes occur only after a rollback deletion fails. For nested rollbacks, retry records are written inside the surviving transaction and retained in memory until its outermost commit or rollback, when they are made durable again if necessary. Recovery requires a writable metadata database; process termination before the outer transaction finishes can still lose nested recovery work.
 
 On Laravel versions with after-rollback callbacks, the package registers its rollback hook when the transaction begins, before application callbacks can throw and prevent the rollback event. If a failed package-managed commit leaves PDO in a transaction despite Laravel reporting transaction level zero, the package rolls back that transaction before deciding whether publication succeeded.
 
@@ -166,7 +196,7 @@ This protection intentionally allows a slow read to delay publication and cleanu
 
 Transaction handling relies on Laravel's connection APIs and transaction events; do not bypass them with raw PDO commits/rollbacks or remove the package's listeners. Database and filesystem operations are not a distributed transaction: process termination during an unpublished write can still leave staged files, and filesystem failures during rollback are reported rather than silently ignored.
 
-Version metadata and cleanup discovery use the primary database connection rather than a potentially lagging read replica. Handlers retain the filesystem instance selected when they are created, so deferred commit/rollback work still targets the original disk if its container binding changes.
+Version metadata and cleanup discovery use the primary database connection rather than a potentially lagging read replica. Handlers retain the filesystem instance selected when they are created, so rollback work still targets the original disk if its container binding changes. The cleanup command resolves disks from its own application's configuration.
 
 ### Configuration and Facade
 

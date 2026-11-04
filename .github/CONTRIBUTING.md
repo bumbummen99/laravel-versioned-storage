@@ -70,6 +70,8 @@ The command creates a temporary baseline worktree, benchmarks both versions usin
 
 The benchmarks use an in-memory SQLite database and a local fake disk. Each iteration starts with fresh fixtures; application boot, migrations, fixture creation, and teardown are outside the timed operation. Subjects cover file reads, existence checks, version listing, new resource registration, file/directory writes, directory child reads, and replacements with cleanup. They measure local package overhead, not remote-server latency. Peak memory includes the bootstrapped application.
 
+Replacement-with-cleanup subjects explicitly call the synchronous cleanup API after publication so they include actual deletion costs, not just retirement flags. Other writes do not automatically delete retired snapshots.
+
 Each scenario uses 10 iterations, with repetitions tuned to its workload:
 
 | Scenarios | Measured operations per iteration | Warmup operations per iteration |

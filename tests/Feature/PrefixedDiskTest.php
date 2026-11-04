@@ -113,6 +113,7 @@ it('removes retired physical files on a prefixed disk rather than only their met
         VersionedStorage::put('reports', 'replacement', cleanup: true, disk: 'tenant');
     }
 
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
     $relative = "reports/{$first}".($directory ? '/summary.txt' : '');
     expect($directory
         ? VersionedStorage::directory('reports', disk: 'tenant')->versions()

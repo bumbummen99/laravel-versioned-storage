@@ -1,0 +1,68 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Contracts\Console\Kernel;
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\Storage;
+use League\Flysystem\Filesystem;
+use League\Flysystem\Local\LocalFilesystemAdapter;
+use Orchestra\Testbench\Foundation\Application;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
+use Symfony\Component\Console\Input\ArgvInput;
+use Symfony\Component\Console\Output\ConsoleOutput;
+
+require __DIR__.'/../../../vendor/autoload.php';
+
+$app = Application::create(resolvingCallback: static function ($app): void {
+    $app->booting(static function ($app): void {
+        $app['config']->set('database.default', 'cleanup');
+        $app['config']->set('database.connections.cleanup', [
+            'driver' => 'sqlite',
+            'database' => getenv('VERSIONED_STORAGE_TEST_DB'),
+            'foreign_key_constraints' => true,
+        ]);
+        $app['config']->set('filesystems.disks.concurrent', [
+            'driver' => 'concurrent-test',
+            'root' => getenv('VERSIONED_STORAGE_TEST_ROOT'),
+        ]);
+        $app['config']->set('concurrency.default', 'process');
+    });
+}, options: ['extra' => ['providers' => [VersionedStorageServiceProvider::class], 'dont-discover' => ['*']]]);
+
+Storage::extend('concurrent-test', static function ($app, array $config): FilesystemAdapter {
+    $adapter = new class($config['root']) extends LocalFilesystemAdapter
+    {
+        public function __construct(private readonly string $root)
+        {
+            parent::__construct($root);
+        }
+
+        public function delete(string $path): void
+        {
+            $marker = $this->root.'/worker-'.getmypid();
+            file_put_contents($marker, $path);
+            $deadline = microtime(true) + 10;
+
+            while (count(glob($this->root.'/worker-*')) < 2) {
+                if (microtime(true) > $deadline) {
+                    throw new RuntimeException('Cleanup workers did not overlap.');
+                }
+
+                usleep(10000);
+            }
+
+            parent::delete($path);
+        }
+    };
+
+    return new FilesystemAdapter(new Filesystem($adapter), $adapter, $config);
+});
+
+// Child processes re-enter this same application fixture through its Artisan entry point.
+$app->setBasePath(__DIR__);
+$kernel = $app->make(Kernel::class);
+$input = new ArgvInput;
+$status = $kernel->handle($input, new ConsoleOutput);
+$kernel->terminate($input, $status);
+exit($status);

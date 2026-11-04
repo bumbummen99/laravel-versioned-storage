@@ -103,6 +103,7 @@ it('does not reuse a retired version UUID after cleanup', function () {
         $first = VersionedStorage::put('collision', 'original');
         Str::createUuidsNormally();
         $current = VersionedStorage::put('collision', 'current', true);
+        $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
         Storage::disk('local')->assertMissing("collision/{$first}");
         Str::createUuidsUsing(fn () => $uuid);
 

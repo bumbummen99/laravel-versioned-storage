@@ -84,6 +84,7 @@ final class StorageBench
     public function benchReplaceAndCleanupFile(): void
     {
         VersionedStorage::put('file.txt', str_repeat('x', 1024), cleanup: true);
+        VersionedStorage::cleanup('file.txt');
     }
 
     #[Bench\Revs(100)]
@@ -93,5 +94,6 @@ final class StorageBench
         VersionedStorage::directory('reports', static function (FilesystemAdapter $files): void {
             $files->put('summary.txt', str_repeat('x', 1024));
         }, cleanup: true);
+        VersionedStorage::directory('reports')->cleanup();
     }
 }

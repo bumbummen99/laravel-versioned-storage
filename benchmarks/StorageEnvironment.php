@@ -30,9 +30,9 @@ final class StorageEnvironment extends Application
 
     public function shutdown(): void
     {
+        $this->app->terminate();
         Storage::disk('benchmark')->deleteDirectory('');
         DB::disconnect();
-        $this->app->terminate();
     }
 
     protected function defineEnvironment($app): void

@@ -13,9 +13,14 @@ use Throwable;
 class VersionedStorageTransactions
 {
     /**
-     * @var array<int, list<array{handler: VersionedStorageHandler, version: ?string, level: int}>>
+     * @var array<int, list<array{handler: VersionedStorageHandler, version: string, level: int}>>
      */
     private array $pending = [];
+
+    /**
+     * @var array<int, list<array{handler: VersionedStorageHandler, version: string}>>
+     */
+    private array $failedDiscards = [];
 
     public function beginning(TransactionBeginning $event): void
     {
@@ -27,7 +32,7 @@ class VersionedStorageTransactions
         }
     }
 
-    public function defer(Connection $connection, VersionedStorageHandler $handler, ?string $version = null): void
+    public function defer(Connection $connection, VersionedStorageHandler $handler, string $version): void
     {
         $this->pending[spl_object_id($connection)][] = [
             'handler' => $handler,
@@ -52,20 +57,7 @@ class VersionedStorageTransactions
             return;
         }
 
-        $error = null;
-
-        foreach ($pending as $item) {
-            try {
-                $item['handler']->cleanup();
-            } catch (Throwable $exception) {
-                report($exception);
-                $error ??= $exception;
-            }
-        }
-
-        if ($error !== null) {
-            throw $error;
-        }
+        $this->retainFailedDiscards($event->connection);
     }
 
     public function rolledBack(TransactionRolledBack $event): void
@@ -83,13 +75,44 @@ class VersionedStorageTransactions
                 continue;
             }
 
-            if ($item['version'] !== null) {
-                try {
-                    $item['handler']->discard($item['version']);
-                } catch (Throwable $exception) {
-                    report($exception);
-                    $error ??= $exception;
+            try {
+                $item['handler']->discard($item['version']);
+            } catch (Throwable $exception) {
+                $this->failedDiscards[$id][] = [
+                    'handler' => $item['handler'],
+                    'version' => $item['version'],
+                ];
+                report($exception);
+                $error ??= $exception;
+            }
+        }
+
+        $this->retainFailedDiscards($event->connection);
+
+        if ($error !== null) {
+            throw $error;
+        }
+    }
+
+    private function retainFailedDiscards(Connection $connection): void
+    {
+        $id = spl_object_id($connection);
+        $failed = $this->failedDiscards[$id] ?? [];
+        unset($this->failedDiscards[$id]);
+        $error = null;
+
+        foreach ($failed as $item) {
+            try {
+                $item['handler']->retainDiscard($item['version']);
+
+                // An outer rollback can still erase the newly written retry record.
+                if ($connection->transactionLevel() > 0) {
+                    $this->failedDiscards[$id][] = $item;
                 }
+            } catch (Throwable $exception) {
+                $this->failedDiscards[$id][] = $item;
+                report($exception);
+                $error ??= $exception;
             }
         }
 

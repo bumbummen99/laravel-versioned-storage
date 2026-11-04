@@ -105,6 +105,7 @@ it('isolates S3 snapshot reads and cleanup by bucket prefix or resource path', f
     $other = $write('s3-second', 'other');
     $replacement = $write('s3-first', 'replacement', true);
     $suffix = $directory ? '/nested/summary.txt' : '';
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     expect($read('s3-first'))->toBe('replacement')
         ->and($read('s3-second'))->toBe('other')

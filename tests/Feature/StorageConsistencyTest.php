@@ -23,6 +23,7 @@ it('rejects separately registered resources inside a directory version before wr
     $replacement = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
         $files->put('summary.txt', 'replacement contents');
     }, true);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     expect(VersionedStorage::directory('reports')->versions())->toBe([$replacement])
         ->and(VersionedStorage::directory('reports')->get('summary.txt'))->toBe('replacement contents')
@@ -46,6 +47,7 @@ it('rejects overlapping resources registered through a second disk name for the 
         $replacement = VersionedStorage::directory('shared-reports', function (FilesystemAdapter $files): void {
             $files->put('summary.txt', 'replacement contents');
         }, cleanup: true, disk: 'local');
+        $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
         expect(VersionedStorage::directory('shared-reports', disk: 'local')->versions())->toBe([$replacement])
             ->and(VersionedStorage::versions($childPath, 'local-alias'))->toBe([])
@@ -91,6 +93,7 @@ it('does not require a retired independent disk to clean up directory snapshots'
     $second = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
         $files->put('summary.txt', 'replacement contents');
     }, cleanup: true);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     expect(VersionedStorage::directory('reports')->versions())->toBe([$second])
         ->and(VersionedStorage::directory('reports')->get('summary.txt'))->toBe('replacement contents')
@@ -175,9 +178,10 @@ it('protects legacy overlapping resources registered through a second disk name 
         ]);
         $local->put("{$childPath}/{$child}", 'independent contents');
 
-        expect(fn () => VersionedStorage::directory('shared-legacy', function (FilesystemAdapter $files): void {
+        VersionedStorage::directory('shared-legacy', function (FilesystemAdapter $files): void {
             $files->put('summary.txt', 'replacement contents');
-        }, cleanup: true, disk: 'local'))
+        }, cleanup: true, disk: 'local');
+        expect(fn () => VersionedStorage::directory('shared-legacy', disk: 'local')->cleanup())
             ->toThrow(RuntimeException::class, 'contains registered resource');
 
         expect(VersionedStorage::directory('shared-legacy', disk: 'local')->get('summary.txt'))
@@ -250,9 +254,11 @@ it('refuses destructive cleanup of overlapping resources registered before the o
     ]);
     Storage::disk('local')->put("legacy/{$parentVersion}/one", 'old contents');
 
-    expect(fn () => VersionedStorage::directory('legacy', function (FilesystemAdapter $files): void {
+    VersionedStorage::directory('legacy', function (FilesystemAdapter $files): void {
         $files->put('one', 'replacement');
-    }, true))->toThrow(RuntimeException::class, 'contains registered resource');
+    }, true);
+    expect(fn () => VersionedStorage::directory('legacy')->cleanup())
+        ->toThrow(RuntimeException::class, 'contains registered resource');
 
     expect(VersionedStorage::get($childPath, $child))->toBe('independent contents')
         ->and(VersionedStorage::directory('legacy')->get('one'))->toBe('replacement')
@@ -342,7 +348,7 @@ it('lists authoritative versions rather than stale read replica metadata', funct
     }
 });
 
-it('cleans the original disk after commit even if the configured disk name is rebound', function () {
+it('does not automatically clean either disk when its name is rebound before commit', function () {
     $original = Storage::disk('local');
     $first = VersionedStorage::put('rebound-commit', 'original');
     $replacement = Storage::fake('replacement');
@@ -351,6 +357,11 @@ it('cleans the original disk after commit even if the configured disk name is re
     $second = VersionedStorage::put('rebound-commit', 'replacement', true);
     Storage::set('local', $replacement);
     DB::commit();
+    app()->terminate();
+    expect($original->exists("rebound-commit/{$first}"))->toBeTrue()
+        ->and($replacement->get("rebound-commit/{$first}"))->toBe('unrelated');
+    Storage::set('local', $original);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     expect($original->exists("rebound-commit/{$first}"))->toBeFalse()
         ->and($original->get("rebound-commit/{$second}"))->toBe('replacement')

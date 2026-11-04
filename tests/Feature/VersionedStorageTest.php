@@ -52,6 +52,7 @@ it('removes only previous file versions from the database and filesystem', funct
     $first = VersionedStorage::put('foo/bar/baz', 'first');
     $other = VersionedStorage::put('foo/bar/other', 'other');
     $second = VersionedStorage::put('foo/bar/baz', 'second', true);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     Storage::disk('local')->assertMissing("foo/bar/baz/{$first}");
     Storage::disk('local')->assertExists(["foo/bar/baz/{$second}", "foo/bar/other/{$other}", 'foo/bar/baz/unrelated']);
@@ -69,6 +70,7 @@ it('removes all files in previous directory versions without touching other data
     $second = VersionedStorage::directory('foo/bar', function (FilesystemAdapter $files): void {
         $files->put('three', 'three');
     }, true);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     Storage::disk('local')->assertDirectoryEmpty("foo/bar/{$first}");
     Storage::disk('local')->assertMissing(["foo/bar/{$first}/one", "foo/bar/{$first}/nested/two"]);
@@ -129,7 +131,8 @@ it('reports cleanup failures without deleting the newly published current versio
         ->andThrow(UnableToDeleteFile::atLocation("file/{$first}"));
     Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
 
-    expect(fn () => VersionedStorage::put('file', 'replacement', true))
+    VersionedStorage::put('file', 'replacement', true);
+    expect(fn () => VersionedStorage::cleanup('file'))
         ->toThrow(RuntimeException::class, 'Unable to remove version')
         ->and(VersionedStorage::get('file'))->toBe('replacement')
         ->and(VersionedStorage::versions('file'))->toHaveCount(1)

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 $files = [
@@ -95,6 +97,24 @@ it('Can cleanup previous multi file versions', function () use ($create, $files,
             $verify($directory, $version);
         }
     }
+});
+
+it('Retires directory revisions and leaves physical deletion to the cleanup command', function () {
+    $old = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->put('one.txt', 'original');
+    });
+    $current = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->put('one.txt', 'replacement');
+    }, cleanup: true);
+
+    expect(VersionedStorage::directory('reports')->versions())->toBe([$current])
+        ->and(VersionedStorage::directory('reports')->exists('one.txt', $old))->toBeFalse();
+    Storage::disk('local')->assertExists("reports/{$old}/one.txt");
+
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+
+    Storage::disk('local')->assertMissing("reports/{$old}");
+    expect(VersionedStorage::directory('reports')->get('one.txt'))->toBe('replacement');
 });
 
 it('Can list available multi file versions', function () use ($create) {

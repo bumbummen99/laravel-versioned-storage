@@ -15,7 +15,7 @@ use League\Flysystem\Filesystem;
 use League\Flysystem\UnableToDeleteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
-it('defers cleanup until the outer commit and removes staged files on rollback', function () {
+it('leaves committed retired snapshots for the command and removes staged files on rollback', function () {
     $first = VersionedStorage::put('rollback', 'original');
     DB::beginTransaction();
     $second = VersionedStorage::put('rollback', 'replacement', true);
@@ -32,6 +32,10 @@ it('defers cleanup until the outer commit and removes staged files on rollback',
     });
 
     expect(VersionedStorage::get('rollback'))->toBe('committed');
+    Storage::disk('local')->assertExists("rollback/{$first}");
+    app()->terminate();
+    Storage::disk('local')->assertExists("rollback/{$first}");
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
     Storage::disk('local')->assertMissing("rollback/{$first}");
 });
 
@@ -255,7 +259,8 @@ it('retains failed cleanup records and can retry cleanup without publishing agai
         ->andThrow(UnableToDeleteFile::atLocation("retry/{$first}"));
     Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
 
-    expect(fn () => VersionedStorage::put('retry', 'replacement', true))->toThrow(RuntimeException::class);
+    VersionedStorage::put('retry', 'replacement', true);
+    expect(fn () => VersionedStorage::cleanup('retry'))->toThrow(RuntimeException::class);
     expect(DB::table('versioned_storage_versions')->where('version', $first)->exists())->toBeTrue();
     Storage::set('local', $disk);
     VersionedStorage::cleanup('retry');
@@ -266,7 +271,7 @@ it('retains failed cleanup records and can retry cleanup without publishing agai
         ->and(DB::table('versioned_storage_versions')->count())->toBe(1);
 });
 
-it('preserves the committed version when deferred cleanup fails at the outer commit', function () {
+it('preserves the committed version when command cleanup fails', function () {
     $first = VersionedStorage::put('deferred-failure', 'original');
     $disk = Storage::disk('local');
     $adapter = Mockery::mock($disk->getAdapter())->makePartial();
@@ -277,8 +282,11 @@ it('preserves the committed version when deferred cleanup fails at the outer com
     DB::beginTransaction();
     $second = VersionedStorage::put('deferred-failure', 'replacement', true);
     Storage::disk('local')->assertExists("deferred-failure/{$first}");
-    expect(fn () => DB::commit())->toThrow(RuntimeException::class, 'Unable to remove version')
-        ->and(VersionedStorage::get('deferred-failure'))->toBe('replacement')
+    DB::commit();
+    Storage::disk('local')->assertExists("deferred-failure/{$first}");
+    app()->terminate();
+    $this->artisan('laravel-versioned-storage:cleanup')->assertFailed();
+    expect(VersionedStorage::get('deferred-failure'))->toBe('replacement')
         ->and(VersionedStorage::versions('deferred-failure'))->toBe([$second])
         ->and(DB::table('versioned_storage_versions')->where('version', $first)->exists())->toBeTrue();
 
@@ -311,6 +319,110 @@ it('removes rolled back directory snapshots without deleting the original snapsh
     expect(VersionedStorage::directory('directory')->get('one'))->toBe('original')
         ->and(VersionedStorage::directory('directory')->versions())->toBe([$first]);
     Storage::disk('local')->assertMissing("directory/{$second}/one");
+});
+
+it('can retry a failed snapshot deletion after rollback', function (bool $directory, bool $newResource, string $outer) {
+    $write = static function (string $contents) use ($directory): string {
+        return $directory
+            ? VersionedStorage::directory('rollback-retry', function (FilesystemAdapter $files) use ($contents): void {
+                $files->put('one', $contents);
+            }, cleanup: true)
+            : VersionedStorage::put('rollback-retry', $contents, cleanup: true);
+    };
+    $versions = static fn (): array => $directory
+        ? VersionedStorage::directory('rollback-retry')->versions()
+        : VersionedStorage::versions('rollback-retry');
+    $first = $newResource ? null : $write('original');
+    $disk = Storage::disk('local');
+    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
+
+    if ($outer !== 'none') {
+        DB::beginTransaction();
+    }
+
+    DB::beginTransaction();
+    $second = $write('replacement');
+    $refuseDeletion = true;
+    $method = $directory ? 'deleteDirectory' : 'delete';
+    $adapter->shouldReceive($method)
+        ->with("rollback-retry/{$second}")
+        ->andReturnUsing(function (string $path) use (&$refuseDeletion, $disk, $method): void {
+            if ($refuseDeletion) {
+                throw new RuntimeException('snapshot deletion refused');
+            }
+
+            $disk->getAdapter()->$method($path);
+        });
+
+    try {
+        expect(fn () => DB::rollBack())->toThrow(RuntimeException::class, 'snapshot deletion refused');
+    } finally {
+        $refuseDeletion = false;
+        Storage::set('local', $disk);
+    }
+
+    $expectedVersions = $first === null ? [] : [$first];
+    expect($versions())->toBe($expectedVersions)
+        ->and(DB::table('versioned_storage_versions')->where('version', $second)->value('pending_delete'))->toBe(1);
+    $disk->assertExists("rollback-retry/{$second}");
+
+    if ($outer === 'commit') {
+        DB::commit();
+    } elseif ($outer === 'rollback') {
+        DB::rollBack();
+    }
+
+    expect(DB::transactionLevel())->toBe(0)
+        ->and($versions())->toBe($expectedVersions);
+
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+
+    $disk->assertMissing("rollback-retry/{$second}");
+    expect(DB::table('versioned_storage_versions')->where('version', $second)->exists())->toBeFalse()
+        ->and(DB::table('versioned_storage_reservations')->where('version', $second)->exists())->toBeTrue();
+
+    if ($first !== null) {
+        expect($directory
+            ? VersionedStorage::directory('rollback-retry')->get('one')
+            : VersionedStorage::get('rollback-retry'))->toBe('original');
+        $disk->assertExists("rollback-retry/{$first}");
+    }
+})->with([false, true])->with([false, true])->with(['none', 'commit', 'rollback']);
+
+it('retains all failed rollback deletions when the filesystem remains unavailable', function () {
+    $disk = Storage::disk('local');
+    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    $refuseDeletion = true;
+    $adapter->shouldReceive('delete')->andReturnUsing(function (string $path) use (&$refuseDeletion, $disk): void {
+        if ($refuseDeletion) {
+            throw new RuntimeException('snapshot deletion refused');
+        }
+
+        $disk->getAdapter()->delete($path);
+    });
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
+
+    DB::beginTransaction();
+    DB::beginTransaction();
+    $first = VersionedStorage::put('rollback-one', 'one');
+    $second = VersionedStorage::put('rollback-two', 'two');
+    expect(fn () => DB::rollBack())->toThrow(RuntimeException::class, 'snapshot deletion refused');
+    DB::commit();
+    app()->terminate();
+
+    expect(DB::transactionLevel())->toBe(0)
+        ->and(VersionedStorage::versions('rollback-one'))->toBe([])
+        ->and(VersionedStorage::versions('rollback-two'))->toBe([])
+        ->and(DB::table('versioned_storage_versions')->where('pending_delete', true)->count())->toBe(2);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertFailed();
+    $disk->assertExists(["rollback-one/{$first}", "rollback-two/{$second}"]);
+
+    $refuseDeletion = false;
+    Storage::set('local', $disk);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    $disk->assertMissing(["rollback-one/{$first}", "rollback-two/{$second}"]);
+    expect(DB::table('versioned_storage_versions')->count())->toBe(0);
 });
 
 it('retries durable cleanup work left by an interrupted process', function () {

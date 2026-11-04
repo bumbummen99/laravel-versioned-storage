@@ -9,5 +9,6 @@ uses(TestCase::class)
     ->beforeEach(function () {
         Storage::fake('local');
         config()->set('filesystems.default', 'local');
+        config()->set('concurrency.default', 'sync');
     })
     ->in('Specification', 'Feature');

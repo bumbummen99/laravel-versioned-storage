@@ -134,9 +134,7 @@ class VersionedStorageHandler
             throw $exception;
         }
 
-        if (! $this->deferIfTransactional($version)) {
-            $this->cleanup();
-        }
+        $this->deferIfTransactional($version);
 
         return $version;
     }
@@ -177,10 +175,8 @@ class VersionedStorageHandler
 
     public function cleanup(): void
     {
-        if ($this->connection()->transactionLevel() > 0) {
-            app(VersionedStorageTransactions::class)->defer($this->connection(), $this);
-
-            return;
+        if ($this->connection()->transactionLevel() > 0 || $this->connection()->getPdo()->inTransaction()) {
+            throw new RuntimeException('Version cleanup cannot run inside an active metadata transaction.');
         }
 
         $error = null;
@@ -225,15 +221,37 @@ class VersionedStorageHandler
         });
     }
 
-    private function deferIfTransactional(string $version): bool
+    public function retainDiscard(string $version): void
+    {
+        $this->transaction(function () use ($version): void {
+            $this->registerResource();
+            $resource = $this->lockResource();
+
+            if ($resource === null) {
+                throw new RuntimeException("Unable to register rollback cleanup for [{$this->path}].");
+            }
+
+            if ($this->versionQuery()->where('version', $version)->exists()) {
+                return;
+            }
+
+            $this->connection()->table('versioned_storage_reservations')->insertOrIgnore(['version' => $version]);
+            $this->connection()->table('versioned_storage_versions')->insert([
+                'resource_id' => $resource->id,
+                'version' => $version,
+                'created_at' => now(),
+                'pending_delete' => true,
+            ]);
+        });
+    }
+
+    private function deferIfTransactional(string $version): void
     {
         if ($this->connection()->transactionLevel() === 0) {
-            return false;
+            return;
         }
 
         app(VersionedStorageTransactions::class)->defer($this->connection(), $this, $version);
-
-        return true;
     }
 
     private function lockResource(): ?stdClass
@@ -352,7 +370,30 @@ class VersionedStorageHandler
             $this->lockResourceRegistration();
         }
 
-        $filesystem = $this->diskFilesystem;
+        $this->assertRemovable($version, $previous);
+        $path = $this->path.'/'.$version;
+
+        SnapshotDeletion::delete($this->diskFilesystem, $path, $this->directory, $previous);
+    }
+
+    /**
+     * @return Closure(): array{version: string, error: ?string}
+     */
+    public function deletionTask(string $version): Closure
+    {
+        $this->assertRemovable($version);
+
+        return SnapshotDeletion::task(
+            $this->disk,
+            $this->path.'/'.$version,
+            $version,
+            $this->directory,
+            hash('sha256', json_encode($this->diskFilesystem->getConfig(), JSON_THROW_ON_ERROR)),
+        );
+    }
+
+    private function assertRemovable(string $version, ?Throwable $previous = null): void
+    {
         $path = $this->path.'/'.$version;
 
         if ($this->directory) {
@@ -365,12 +406,6 @@ class VersionedStorageHandler
                     throw new RuntimeException("Cannot remove version [{$version}]: it contains registered resource [{$resource->path}].", 0, $previous);
                 }
             }
-        }
-
-        $deleted = $this->directory ? $filesystem->deleteDirectory($path) : $filesystem->delete($path);
-
-        if (! $deleted || $filesystem->exists($path)) {
-            throw new RuntimeException("Unable to remove version [{$version}] of [{$this->path}].", 0, $previous);
         }
     }
 
