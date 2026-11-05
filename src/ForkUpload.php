@@ -57,7 +57,7 @@ class ForkUpload
             throw new RuntimeException("Forked upload timed out or exited abnormally (limit: {$seconds} seconds).", previous: $exception);
         } finally {
             foreach ($handlers as $signal => $handler) {
-                pcntl_signal($signal, is_int($handler) ? $handler : $handler(...));
+                $this->restoreSignalHandler($signal, $handler);
             }
             pcntl_async_signals($asynchronous);
         }
@@ -72,5 +72,14 @@ class ForkUpload
         if ($result !== true) {
             throw new RuntimeException("Forked upload timed out or exited abnormally (limit: {$seconds} seconds).");
         }
+    }
+
+    private function restoreSignalHandler(int $signal, mixed $handler): void
+    {
+        if (! is_int($handler) && ! is_callable($handler)) {
+            throw new RuntimeException("Unable to restore the handler for signal [{$signal}].");
+        }
+
+        pcntl_signal($signal, $handler);
     }
 }

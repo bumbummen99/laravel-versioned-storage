@@ -33,7 +33,7 @@ class VersionedFilesystem extends FilesystemAdapter
     /**
      * @param  string  $path
      */
-    public function url($path): string
+    public function url(mixed $path): string
     {
         return $this->filesystem->url($this->scopedPath($path));
     }
@@ -48,7 +48,7 @@ class VersionedFilesystem extends FilesystemAdapter
      * @param  DateTimeInterface  $expiration
      * @param  array<string, mixed>  $options
      */
-    public function temporaryUrl($path, $expiration, array $options = []): string
+    public function temporaryUrl(mixed $path, mixed $expiration, array $options = []): string
     {
         return $this->temporaryUrlCallback
             ? parent::temporaryUrl($path, $expiration, $options)
@@ -66,7 +66,7 @@ class VersionedFilesystem extends FilesystemAdapter
      * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
-    public function temporaryUploadUrl($path, $expiration, array $options = []): array
+    public function temporaryUploadUrl(mixed $path, mixed $expiration, array $options = []): array
     {
         throw new RuntimeException('Temporary upload URLs are not supported for versioned snapshots.');
     }
