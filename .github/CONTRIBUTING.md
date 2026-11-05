@@ -84,6 +84,14 @@ processes before deleting its temporary directory. Server-specific resources
 remain owned by the server fixture. `TestUploadClock` provides independent
 wall and monotonic time without changing Carbon's global test clock.
 
+Keep acceptance tests readable as concrete examples: descriptive behavior
+names, explicit setup, and assertions visible in the test body. Helpers
+should remove mechanical setup, not hide the behavior being verified.
+Use distinct contents across revisions so a wrong-version read cannot pass
+accidentally. Compare complete version lists rather than iterating only the
+returned entries, which would also pass for an empty or incomplete list.
+Avoid comments that merely repeat the next statement.
+
 Run all Pest tests without the additional quality checks:
 
 ```bash

@@ -6,132 +6,97 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
-$files = [
-    'one',
-    'two',
-    'three',
-];
+it('writes and reads multiple files within one directory snapshot', function () {
+    $version = VersionedStorage::directory('reports/monthly', function (FilesystemAdapter $files): void {
+        $files->put('summary.txt', 'monthly summary');
+        $files->put('details/data.csv', 'monthly details');
+    });
+    $directory = VersionedStorage::directory('reports/monthly');
 
-/**
- * Creates a new versioned file and verifies that the file
- * exists & has the correct contents at the same time.
- */
-$create = function ($directory, $cleanup = false) use ($files) {
-    // Write the files
-    $version = VersionedStorage::directory($directory, function ($filesystem) use ($files) {
-        foreach ($files as $i => $file) {
-            $filesystem->put($file, "File '{$file}' version {$i}");
-        }
-    }, $cleanup);
-
-    // Verify the files
-    foreach ($files as $i => $file) {
-        // Check the file
-        expect(
-            VersionedStorage::directory($directory)->exists($file),
-        )->toBeTrue();
-
-        // Verify the contents
-        expect(
-            VersionedStorage::directory($directory)->get($file),
-        )->toBe("File '{$file}' version {$i}");
-    }
-
-    return $version;
-};
-
-$verify = function ($directory, $version = null) use ($files) {
-    // Verify the files
-    foreach ($files as $i => $file) {
-        // Check the file
-        expect(
-            VersionedStorage::directory($directory)->exists($file, $version),
-        )->toBeTrue();
-
-        // Verify the contents
-        expect(
-            VersionedStorage::directory($directory)->get($file, $version),
-        )->toBe("File '{$file}' version {$i}");
-    }
-};
-
-it('Can handle multiple files', function () use ($create) {
-    $create('foo/bar');
+    expect($directory->exists('summary.txt'))->toBeTrue()
+        ->and($directory->get('summary.txt'))->toBe('monthly summary')
+        ->and($directory->exists('details/data.csv'))->toBeTrue()
+        ->and($directory->get('details/data.csv', $version))->toBe('monthly details');
 });
 
-it('Can handle multiple multi file versions', function () use ($create, $verify) {
-    $directory = 'foo/bar';
+it('preserves distinct directory versions and selects the latest snapshot by default', function () {
+    $path = 'reports/monthly';
     $versions = [];
+    $contents = ['first report', 'second report', 'third report'];
+    $directory = VersionedStorage::directory($path);
 
-    // Create multiple versions of the same files
-    foreach (range(1, 3) as $i => $file) {
-        $versions[] = $create($directory);
+    foreach ($contents as $content) {
+        $versions[] = VersionedStorage::directory($path, function (FilesystemAdapter $files) use ($content): void {
+            $files->put('summary.txt', $content);
+            $files->put('details/data.csv', "details: {$content}");
+        });
+        expect($directory->exists('summary.txt'))->toBeTrue()
+            ->and($directory->get('summary.txt'))->toBe($content)
+            ->and($directory->exists('details/data.csv'))->toBeTrue()
+            ->and($directory->get('details/data.csv'))->toBe("details: {$content}");
     }
 
-    // Check & read again to verify all previous versions still exist
-    foreach ($versions as $version) {
-        $verify($directory, $version);
-    }
-});
-
-it('Can cleanup previous multi file versions', function () use ($create, $files, $verify) {
-    $directory = 'foo/bar';
-    $versions = [];
-
-    // Create multiple versions of the same files
-    foreach (range(1, 3) as $i => $file) {
-        $versions[] = $create($directory, true);
-    }
-
-    // Check & read again to verify all previous versions still exist
     foreach ($versions as $index => $version) {
-        if ($index < 2) {
-            // Previous version
-            foreach ($files as $file) {
-                expect(
-                    VersionedStorage::directory($directory)->exists($file, $version),
-                )->toBeFalse();
-            }
-        } else {
-            // Current version
-            $verify($directory, $version);
-        }
+        expect($directory->exists('summary.txt', $version))->toBeTrue()
+            ->and($directory->get('summary.txt', $version))->toBe($contents[$index])
+            ->and($directory->exists('details/data.csv', $version))->toBeTrue()
+            ->and($directory->get('details/data.csv', $version))->toBe("details: {$contents[$index]}");
     }
 });
 
-it('Retires directory revisions and leaves physical deletion to the cleanup command', function () {
+it('retires previous directory versions without hiding files in the current snapshot', function () {
+    $path = 'reports/monthly';
+    $versions = [];
+
+    foreach (['first report', 'second report', 'current report'] as $content) {
+        $versions[] = VersionedStorage::directory($path, function (FilesystemAdapter $files) use ($content): void {
+            $files->put('summary.txt', $content);
+            $files->put('details/data.csv', "details: {$content}");
+        }, cleanup: true);
+    }
+    [$first, $second, $current] = $versions;
+    $directory = VersionedStorage::directory($path);
+
+    foreach (['summary.txt', 'details/data.csv'] as $file) {
+        expect($directory->exists($file, $first))->toBeFalse()
+            ->and($directory->exists($file, $second))->toBeFalse()
+            ->and($directory->exists($file, $current))->toBeTrue();
+    }
+    expect($directory->get('summary.txt', $current))->toBe('current report')
+        ->and($directory->get('details/data.csv', $current))->toBe('details: current report')
+        ->and($directory->get('summary.txt'))->toBe('current report')
+        ->and($directory->versions())->toBe([$current]);
+});
+
+it('leaves retired physical directories for the cleanup command and preserves the current snapshot', function () {
     $old = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
         $files->put('one.txt', 'original');
     });
     $current = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
         $files->put('one.txt', 'replacement');
     }, cleanup: true);
+    $directory = VersionedStorage::directory('reports');
 
-    expect(VersionedStorage::directory('reports')->versions())->toBe([$current])
-        ->and(VersionedStorage::directory('reports')->exists('one.txt', $old))->toBeFalse();
+    expect($directory->versions())->toBe([$current])
+        ->and($directory->exists('one.txt', $old))->toBeFalse();
     Storage::disk('local')->assertExists("reports/{$old}/one.txt");
 
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     Storage::disk('local')->assertMissing("reports/{$old}");
-    expect(VersionedStorage::directory('reports')->get('one.txt'))->toBe('replacement');
+    Storage::disk('local')->assertExists("reports/{$current}/one.txt");
+    expect($directory->get('one.txt'))->toBe('replacement');
 });
 
-it('Can list available multi file versions', function () use ($create) {
-    $directory = 'foo/bar';
+it('lists all available directory versions from oldest to newest', function () {
+    $path = 'reports/monthly';
     $versions = [];
 
-    // Create multiple versions of the same files
-    foreach (range(1, 3) as $i => $file) {
-        $versions[] = $create($directory);
+    foreach (['first', 'second', 'third'] as $content) {
+        $versions[] = VersionedStorage::directory($path, function (FilesystemAdapter $files) use ($content): void {
+            $files->put('summary.txt', $content);
+        });
     }
 
-    // Verify all previously created versions are listed
-    foreach (
-        VersionedStorage::directory($directory)->versions() as $i => $version
-    ) {
-        expect(
-            $version,
-        )->toBe($versions[$i]);
-    }
+    expect(VersionedStorage::directory($path)->versions())->toBe($versions);
 });

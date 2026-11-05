@@ -5,117 +5,68 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
-/**
- * Creates a new versioned file and verifies that the file
- * exists & has the correct contents at the same time.
- */
-$create = function ($file, $content, $cleanup = false) {
-    // Write the file
-    $version = VersionedStorage::put($file, $content, $cleanup);
+it('writes and reads a file using a normalized leading-slash path', function () {
+    $version = VersionedStorage::put('/foo/bar/baz', 'Hello, World!');
 
-    // Check the file
-    expect(
-        VersionedStorage::exists($file),
-    )->toBeTrue();
-
-    // Verify the contents
-    expect(
-        VersionedStorage::get($file),
-    )->toBe($content);
-
-    return $version;
-};
-
-/**
- * Verifies that the provided file (version) does exist
- * and has the expected contents.
- */
-$verify = function ($file, $content, $version = null) {
-    // Check the file
-    expect(
-        VersionedStorage::exists($file, $version),
-    )->toBeTrue();
-
-    // Verify the contents
-    expect(
-        VersionedStorage::get($file, $version),
-    )->toBe($content);
-};
-
-it('Can handle a single file', function () use ($create) {
-    $file = '/foo/bar/baz';
-
-    $create($file, 'Hello, World!');
+    expect(VersionedStorage::exists('/foo/bar/baz'))->toBeTrue()
+        ->and(VersionedStorage::get('/foo/bar/baz'))->toBe('Hello, World!')
+        ->and(VersionedStorage::get('foo/bar/baz', $version))->toBe('Hello, World!');
 });
 
-it('Can handle multiple single file versions', function () use ($create, $verify) {
-    $file = '/foo/bar/baz';
+it('preserves the contents of each file version and selects the latest by default', function () {
+    $path = 'reports/daily.csv';
     $versions = [];
+    $contents = ['first report', 'second report', 'third report'];
 
-    // Create multiple versions of the same file
-    foreach (range(1, 3) as $i) {
-        $versions[] = $create($file, "File {$i}");
+    foreach ($contents as $content) {
+        $versions[] = VersionedStorage::put($path, $content);
+        expect(VersionedStorage::exists($path))->toBeTrue()
+            ->and(VersionedStorage::get($path))->toBe($content);
     }
 
-    // Check & read again to verify all previous versions still exist
     foreach ($versions as $index => $version) {
-        $verify($file, 'File '.($index + 1), $version);
+        expect(VersionedStorage::exists($path, $version))->toBeTrue()
+            ->and(VersionedStorage::get($path, $version))->toBe($contents[$index]);
     }
 });
 
-it('Can cleanup previous single file versions', function () use ($create, $verify) {
-    $file = '/foo/bar/baz';
-    $versions = [];
+it('retires previous file versions on each replacement without hiding the current version', function () {
+    $path = 'reports/daily.csv';
+    $first = VersionedStorage::put($path, 'first report', cleanup: true);
+    $second = VersionedStorage::put($path, 'second report', cleanup: true);
+    $current = VersionedStorage::put($path, 'current report', cleanup: true);
 
-    // Create multiple versions of the same file
-    foreach (range(1, 3) as $i) {
-        // Write the file & cleanup previous versions
-        $versions[] = $create($file, "File {$i}", true);
-    }
-
-    // Check & read again to verify all previous versions have been removed
-    foreach ($versions as $index => $version) {
-        if ($index < 2) {
-            // Previous version
-            expect(
-                VersionedStorage::exists($file, $version),
-            )->toBeFalse();
-        } else {
-            // Current version
-            $verify($file, 'File '.($index + 1), $version);
-        }
-    }
+    expect(VersionedStorage::exists($path, $first))->toBeFalse()
+        ->and(VersionedStorage::exists($path, $second))->toBeFalse()
+        ->and(VersionedStorage::exists($path, $current))->toBeTrue()
+        ->and(VersionedStorage::get($path, $current))->toBe('current report')
+        ->and(VersionedStorage::get($path))->toBe('current report')
+        ->and(VersionedStorage::versions($path))->toBe([$current]);
 });
 
-it('Retires file revisions and leaves physical deletion to the cleanup command', function () {
-    $old = VersionedStorage::put('reports/daily.csv', 'original');
-    $current = VersionedStorage::put('reports/daily.csv', 'replacement', cleanup: true);
+it('leaves retired physical files for the cleanup command and preserves the current file', function () {
+    $path = 'reports/daily.csv';
+    $old = VersionedStorage::put($path, 'original');
+    $current = VersionedStorage::put($path, 'replacement', cleanup: true);
 
-    expect(VersionedStorage::versions('reports/daily.csv'))->toBe([$current])
-        ->and(VersionedStorage::exists('reports/daily.csv', $old))->toBeFalse();
-    Storage::disk('local')->assertExists("reports/daily.csv/{$old}");
+    expect(VersionedStorage::versions($path))->toBe([$current])
+        ->and(VersionedStorage::exists($path, $old))->toBeFalse();
+    Storage::disk('local')->assertExists("{$path}/{$old}");
 
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
-    Storage::disk('local')->assertMissing("reports/daily.csv/{$old}");
-    expect(VersionedStorage::get('reports/daily.csv'))->toBe('replacement');
+    Storage::disk('local')->assertMissing("{$path}/{$old}");
+    Storage::disk('local')->assertExists("{$path}/{$current}");
+    expect(VersionedStorage::get($path))->toBe('replacement');
 });
 
-it('Can list available single file versions', function () use ($create) {
-    $file = '/foo/bar/baz';
-    $versions = [];
+it('lists all available file versions from oldest to newest', function () {
+    $path = 'reports/daily.csv';
+    $versions = [
+        VersionedStorage::put($path, 'first'),
+        VersionedStorage::put($path, 'second'),
+        VersionedStorage::put($path, 'third'),
+    ];
 
-    // Create multiple versions of the same file
-    foreach (range(1, 3) as $i) {
-        $versions[] = $create($file, "File {$i}");
-    }
-
-    // Verify all previously created versions are listed
-    foreach (
-        VersionedStorage::versions($file) as $i => $version
-    ) {
-        expect(
-            $version,
-        )->toBe($versions[$i]);
-    }
+    expect(VersionedStorage::versions($path))->toBe($versions);
 });
