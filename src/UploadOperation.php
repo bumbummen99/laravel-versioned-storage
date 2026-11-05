@@ -62,10 +62,10 @@ final class UploadOperation
      * @template TResult
      *
      * @param  Closure(FilesystemOperationExecutor, UploadDeadline): TResult  $execute
-     * @param  (Closure(TResult): void)|null  $cleanup
+     * @param  (Closure(TResult): void)|null  $cleanupOnAcknowledgmentFailure
      * @return TResult
      */
-    private function perform(string $operation, Closure $execute, ?Closure $cleanup = null): mixed
+    private function perform(string $operation, Closure $execute, ?Closure $cleanupOnAcknowledgmentFailure = null): mixed
     {
         $this->assertHealthy();
         $mutation = in_array($operation, [
@@ -82,8 +82,8 @@ final class UploadOperation
             try {
                 ($this->complete)($mutation ? $id : '');
             } catch (Throwable $exception) {
-                if ($cleanup !== null) {
-                    $cleanup($result);
+                if ($cleanupOnAcknowledgmentFailure !== null) {
+                    $cleanupOnAcknowledgmentFailure($result);
                 }
 
                 throw $exception;

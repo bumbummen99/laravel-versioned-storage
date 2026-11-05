@@ -109,6 +109,34 @@ it('closes a returned read stream when parent acknowledgement fails', function (
     }
 });
 
+it('rejects further execution after read acknowledgement fails and preserves its cause', function () {
+    $filesystem = Storage::disk('local')->getDriver();
+    $stream = fopen('php://temp', 'w+b');
+    $failure = new RuntimeException('Read acknowledgement failed');
+    $operation = new UploadOperation(
+        ['timeout' => 10, 'fork' => false],
+        [],
+        function (): void {},
+        fn () => throw $failure,
+    );
+
+    try {
+        expect(fn () => $operation->readStream(fn (FilesystemOperator $files) => $stream, $filesystem))
+            ->toThrow($failure);
+        expect(is_resource($stream))->toBeFalse();
+        expect(fn () => $operation->run('read', function (FilesystemOperator $files): never {
+            test()->fail('An unhealthy operation must not execute another callback.');
+        }, $filesystem))->toThrow(function (RuntimeException $exception) use ($failure): void {
+            expect($exception->getMessage())->toBe('The snapshot failed during a filesystem operation.')
+                ->and($exception->getPrevious())->toBe($failure);
+        });
+    } finally {
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+    }
+});
+
 it('hands an acknowledged read stream to the caller without closing it', function () {
     $filesystem = Storage::disk('local')->getDriver();
     $filesystem->write('report', 'contents');
