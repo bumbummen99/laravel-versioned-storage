@@ -20,6 +20,8 @@ For significant changes, please open an issue first so we can discuss the approa
 
 ## Setup
 
+Use a Unix-like PHP runtime with PCNTL, POSIX, and sockets. Native Windows PHP is unsupported; Windows hosts can use WSL2 or a Linux container. CI runs on Ubuntu and macOS across the supported PHP/Laravel versions and both dependency stability lanes.
+
 Clone your fork, then install the dev dependencies:
 
 ```bash

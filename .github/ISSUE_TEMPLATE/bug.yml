@@ -40,7 +40,7 @@ body:
     attributes:
       label: Operating System
       description: If relevant, provide the operating system and version where this occurs.
-      placeholder: macOS 15.0, Ubuntu 24.04, Windows 11
+      placeholder: macOS 15.0, Ubuntu 24.04, Ubuntu on WSL2
     validations:
       required: false
 

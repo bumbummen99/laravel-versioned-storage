@@ -20,6 +20,7 @@ Use this skill when a Laravel application needs to integrate the Laravel Version
 ### 1. Inspect the Laravel app context
 
 - Confirm the app uses Laravel 12 or 13 and PHP 8.3+.
+- Require a Unix-like PHP runtime; native Windows PHP is unsupported because the required Spatie Fork dependency needs PCNTL. Windows hosts must use WSL2 or Linux containers. CLI uploads and queue workers require PCNTL/POSIX/sockets; web uploads require PHP-FPM with a hard termination limit.
 - Identify the target disk, logical file or directory path, and whether consumers need historical versions.
 
 ### 2. Install and configure

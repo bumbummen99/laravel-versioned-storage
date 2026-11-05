@@ -14,6 +14,14 @@ Versioned storage for Laravel. Each write uses a unique filesystem path; the dat
 
 ## Installation
 
+### Requirements
+
+- PHP 8.3+ and Laravel 12 or 13.
+- A Unix-like PHP runtime with PCNTL, POSIX, and sockets extensions for supervised CLI uploads and queue workers.
+- PHP-FPM with a configured hard request termination limit for web uploads.
+
+**Native Windows PHP is not supported.** The required `spatie/fork` dependency requires PCNTL, which is unavailable on Windows. On Windows hosts, run PHP inside WSL2 or a Linux container instead. These execution requirements preserve bounded upload lifetimes; there is no unprotected Windows fallback.
+
 You can install the package via Composer:
 
 ```bash
