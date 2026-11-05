@@ -57,7 +57,7 @@ class ForkUpload
             throw new RuntimeException("Forked upload timed out or exited abnormally (limit: {$seconds} seconds).", previous: $exception);
         } finally {
             foreach ($handlers as $signal => $handler) {
-                pcntl_signal($signal, $handler);
+                pcntl_signal($signal, is_int($handler) ? $handler : $handler(...));
             }
             pcntl_async_signals($asynchronous);
         }
