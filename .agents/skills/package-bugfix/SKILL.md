@@ -1,7 +1,9 @@
 ---
 name: package-bugfix
 description: "Use for supervised package bug finding and regression-first fixes: find other issues in the current codebase, write tests that verify the case, then fix the issue only after explicit user approval. Supports review, questions, and design discussion between phases."
-license: MIT
+license: AGPL-3.0-only with the Library Integration Exception; see LICENSE.md and LICENSE-EXCEPTION.md
+metadata:
+   author: Patrick Henninger
 ---
 
 # Package Bugfix

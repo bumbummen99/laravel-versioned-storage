@@ -8,7 +8,7 @@
         "laravel-versioned-storage"
     ],
     "homepage": "https://github.com/skyraptor/laravel-versioned-storage",
-    "license": "MIT",
+    "license": "AGPL-3.0-only",
     "authors": [
         {
             "name": "Patrick Henninger",

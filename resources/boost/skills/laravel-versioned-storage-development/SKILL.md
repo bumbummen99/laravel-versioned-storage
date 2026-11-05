@@ -2,7 +2,7 @@
 name: laravel-versioned-storage-development
 description: >
   Configure and apply the Laravel Versioned Storage package in Laravel applications.
-license: MIT
+license: AGPL-3.0-only with the Library Integration Exception; see LICENSE.md and LICENSE-EXCEPTION.md
 metadata:
   author: Patrick Henninger
 ---

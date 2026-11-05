@@ -328,4 +328,16 @@ Please review [our security policy](.github/SECURITY.md) on how to report securi
 
 ## License
 
-Laravel Versioned Storage is open-sourced software licensed under the [MIT license](LICENSE.md).
+Laravel Versioned Storage is licensed under [AGPL-3.0-only](LICENSE.md) with
+the [Library Integration Exception](LICENSE-EXCEPTION.md). The complete AGPL
+text is included in [LICENSE.md](LICENSE.md). Composer metadata identifies the base
+AGPL license; the custom exception is described in the accompanying document.
+
+Independently written applications, wrappers, and integrations may keep their
+own license, including proprietary terms, and may bundle the package in a
+vendor directory, Docker image, or appliance. The exception does not exempt
+the package or its covered modifications from applicable AGPL source,
+notice, and redistribution requirements, including network-source obligations.
+Copying implementation into an application does not make it independent.
+
+Separately licensed third-party material retains its applicable terms and notices.
