@@ -163,7 +163,7 @@ describe('forked uploads', function () {
 
     it('prevents later child writes when the parent is terminated', function (string $signal) {
         $directory = $this->forkUploadDirectory;
-        $process = new Process([PHP_BINARY, dirname(__DIR__).'/Support/fork-upload-worker.php', $directory]);
+        $process = new Process([PHP_BINARY, dirname(__DIR__).'/Support/fork-upload-worker.php', $directory, $signal]);
         $process->setTimeout(6);
         $child = null;
 
@@ -176,8 +176,6 @@ describe('forked uploads', function () {
 
             expect(file_exists($directory.'/child'))->toBeTrue($process->getErrorOutput());
             $child = (int) file_get_contents($directory.'/child');
-            $process->signal(constant($signal));
-
             $deadline = microtime(true) + 3.5;
             while (microtime(true) < $deadline) {
                 $process->checkTimeout();
@@ -185,6 +183,8 @@ describe('forked uploads', function () {
             }
 
             expect($process->isRunning())->toBeFalse()
+                ->and($process->hasBeenSignaled())->toBeTrue($process->getErrorOutput())
+                ->and($process->getTermSignal())->toBe(SIGKILL)
                 ->and(file_exists($directory.'/late'))->toBeFalse();
         } finally {
             if ($child !== null && posix_kill($child, 0)) {
