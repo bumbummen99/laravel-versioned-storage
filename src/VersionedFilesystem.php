@@ -6,7 +6,6 @@ namespace SkyRaptor\LaravelVersionedStorage;
 
 use DateTimeInterface;
 use Illuminate\Filesystem\FilesystemAdapter;
-use League\Flysystem\Filesystem;
 use League\Flysystem\PathPrefixing\PathPrefixedAdapter;
 use League\Flysystem\WhitespacePathNormalizer;
 use RuntimeException;
@@ -20,14 +19,11 @@ class VersionedFilesystem extends FilesystemAdapter
         $config = $filesystem->getConfig();
         $config['throw'] = true;
         $config['prefix'] = trim(($config['prefix'] ?? '').'/'.$prefix, '/');
-        $adapter = new PathPrefixedAdapter($filesystem->getAdapter(), $config['prefix']);
-
-        // Match Laravel's derived configuration for R2-compatible disks.
-        if (str_contains($config['endpoint'] ?? '', 'r2.cloudflarestorage.com')) {
-            $config['retain_visibility'] = false;
-        }
-
-        parent::__construct(new Filesystem($adapter, $config), $adapter, $config);
+        parent::__construct(
+            new ScopedFilesystemOperator($filesystem->getDriver(), $prefix),
+            new PathPrefixedAdapter($filesystem->getAdapter(), $config['prefix']),
+            $config,
+        );
     }
 
     /**

@@ -4,10 +4,60 @@ declare(strict_types=1);
 
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Filesystem\FilesystemManager;
+use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Config;
 use League\Flysystem\FilesystemAdapter as FlysystemAdapter;
 use League\Flysystem\FilesystemOperator;
+use League\Flysystem\UnableToWriteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedFilesystem;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+
+it('preserves write restrictions enforced by the selected filesystem operator', function (bool $directory) {
+    $disk = Storage::disk('local');
+    $operator = Mockery::mock($disk->getDriver())->makePartial();
+    $operator->shouldReceive('write')->withAnyArgs()
+        ->andThrow(UnableToWriteFile::atLocation('reports', 'Writes are disabled by the filesystem operator.'));
+    Storage::set('restricted', new FilesystemAdapter($operator, $disk->getAdapter(), [
+        ...$disk->getConfig(), 'throw' => true,
+    ]));
+
+    expect(fn () => Storage::disk('restricted')->put('direct.txt', 'contents'))
+        ->toThrow(UnableToWriteFile::class, 'Writes are disabled');
+
+    expect(fn () => $directory
+        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'contents');
+        }, disk: 'restricted')
+        : VersionedStorage::put('reports', 'contents', disk: 'restricted'))
+        ->toThrow(UnableToWriteFile::class, 'Writes are disabled');
+
+    expect($directory
+        ? VersionedStorage::directory('reports', disk: 'restricted')->versions()
+        : VersionedStorage::versions('reports', 'restricted'))->toBe([]);
+    $disk->assertDirectoryEmpty('reports');
+})->with([false, true]);
+
+it('preserves stream write restrictions enforced by the selected filesystem operator', function () {
+    $disk = Storage::disk('local');
+    $operator = Mockery::mock($disk->getDriver())->makePartial();
+    $operator->shouldReceive('writeStream')->withAnyArgs()
+        ->andThrow(UnableToWriteFile::atLocation('reports', 'Stream writes are disabled.'));
+    Storage::set('restricted', new FilesystemAdapter($operator, $disk->getAdapter(), [
+        ...$disk->getConfig(), 'throw' => true,
+    ]));
+    $stream = fopen('php://temp', 'w+b');
+    fwrite($stream, 'contents');
+    rewind($stream);
+
+    try {
+        expect(fn () => VersionedStorage::put('reports', $stream, disk: 'restricted'))
+            ->toThrow(UnableToWriteFile::class, 'Stream writes are disabled');
+        expect(VersionedStorage::versions('reports', 'restricted'))->toBe([]);
+        $disk->assertDirectoryEmpty('reports');
+    } finally {
+        fclose($stream);
+    }
+});
 
 it('preserves Laravel visibility configuration when copying or moving snapshot files', function (string $operation, array $settings, bool $retainVisibility) {
     $manager = new class(app()) extends FilesystemManager

@@ -111,6 +111,8 @@ All storage paths are relative to the selected disk's configured prefix, includi
 
 Snapshot copy and move operations preserve Laravel's visibility configuration, including its `retain_visibility=false` setting for Cloudflare R2 endpoints.
 
+Snapshot operations delegate to the selected disk's existing Flysystem operator, preserving operator-level restrictions and configuration rather than accessing its raw adapter directly. Write failures still throw even when the disk's Laravel `throw` option is disabled.
+
 The scoped filesystem preserves the selected disk's public and temporary download URL behavior, including custom URL builders. URLs target that specific snapshot; external URL requests do not acquire the package's read locks and can fail after cleanup removes the version. Temporary upload URLs are explicitly unsupported: `providesTemporaryUploadUrls()` returns `false`, and `temporaryUploadUrl()` throws a `RuntimeException`, even if the disk supports them or a custom upload URL builder is configured. All snapshot contents must be written before the callback returns; deferred uploads would allow writes after publication.
 
 ### Exclusive Version Containers and Nested Disks

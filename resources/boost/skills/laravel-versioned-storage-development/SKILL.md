@@ -68,6 +68,8 @@ Paths remain relative to the selected disk's configured prefix, including Larave
 
 Snapshot copy/move operations follow Laravel's visibility configuration, including disabled visibility retention for Cloudflare R2 endpoints.
 
+Snapshot operations preserve restrictions implemented by the selected disk's Flysystem operator. Write failures throw even if the original disk has `throw=false`.
+
 `put()` accepts strings, streams, and Laravel `File`/`UploadedFile` objects. Uploaded files are streamed into the exact version filename.
 
 ### 4. Coordinate cleanup and transactions
