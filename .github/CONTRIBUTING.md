@@ -92,6 +92,15 @@ accidentally. Compare complete version lists rather than iterating only the
 returned entries, which would also pass for an empty or incomplete list.
 Avoid comments that merely repeat the next statement.
 
+Prefer named private lifecycle steps over large inline orchestration blocks;
+keep transaction ownership and failure propagation visible. Use named
+scenario values rather than multiple boolean switches in test datasets.
+Crash-worker scenario functions should identify the boundary they exercise.
+The before-publication crash fixture intentionally matches the version insert:
+an earlier transaction event would pause at a different durability boundary.
+Keep that SQL-sensitive hook isolated rather than adding production events
+solely for tests.
+
 Run all Pest tests without the additional quality checks:
 
 ```bash

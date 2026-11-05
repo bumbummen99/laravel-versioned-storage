@@ -12,6 +12,7 @@ use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use Orchestra\Testbench\Foundation\Application;
 use SkyRaptor\LaravelVersionedStorage\Testing\SynchronousUploadExecution;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
 use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
@@ -51,7 +52,8 @@ $pause = static function (): never {
     }
 };
 
-if (in_array($mode, ['upload', 'live-upload', 'session-loss'], true)) {
+function installInterruptedUploadDisk(string $root, string $mode, Closure $pause): void
+{
     $adapter = new class($root, $pause, $mode) extends LocalFilesystemAdapter
     {
         public function __construct(
@@ -73,13 +75,7 @@ if (in_array($mode, ['upload', 'live-upload', 'session-loss'], true)) {
                 }
                 fwrite(STDOUT, "writer-paused\n");
                 fflush(STDOUT);
-                $deadline = microtime(true) + 10;
-                while (! file_exists($this->root.'/release-upload')) {
-                    if (microtime(true) > $deadline) {
-                        throw new RuntimeException('Live upload was not released.');
-                    }
-                    usleep(10000);
-                }
+                ProcessWait::until(fn (): bool => file_exists($this->root.'/release-upload'), [], 10);
                 // Model an accepted remote request completing after cleanup, using a local write.
                 rewind($contents);
                 parent::writeStream($path, $contents, $config);
@@ -99,7 +95,8 @@ if (in_array($mode, ['upload', 'live-upload', 'session-loss'], true)) {
     ]));
 }
 
-if ($mode === 'session-loss') {
+function verifySessionLoss(string $root): never
+{
     try {
         VersionedStorage::put('crash-file', new File($root.'/upload-source.txt'), cleanup: true);
     } catch (RuntimeException $exception) {
@@ -114,7 +111,9 @@ if ($mode === 'session-loss') {
     throw new LogicException('Publication unexpectedly succeeded after session loss.');
 }
 
-if ($mode === 'before-publication') {
+function pauseBeforePublication(Closure $pause): void
+{
+    // This fixture intentionally targets the version insert, not earlier stage commits.
     DB::connection()->beforeExecuting(static function (string $sql) use ($pause): void {
         if (str_starts_with($sql, 'insert into "versioned_storage_versions"')) {
             $pause();
@@ -122,7 +121,8 @@ if ($mode === 'before-publication') {
     });
 }
 
-if (in_array($mode, ['upload', 'live-upload', 'before-publication', 'uncommitted-put', 'committed-put'], true)) {
+function runPublicationCrash(string $root, string $mode, Closure $pause): never
+{
     if ($mode === 'uncommitted-put') {
         $staged = VersionedStorage::stage('crash-file', new File($root.'/upload-source.txt'));
         DB::beginTransaction();
@@ -142,41 +142,62 @@ if (in_array($mode, ['upload', 'live-upload', 'before-publication', 'uncommitted
     $pause();
 }
 
-$adapter = new class($root) extends LocalFilesystemAdapter
+function runFailedRecoveryCrash(string $root): never
 {
-    public function deleteDirectory(string $path): void
+    $adapter = new class($root) extends LocalFilesystemAdapter
     {
-        throw new RuntimeException('snapshot deletion refused');
+        public function deleteDirectory(string $path): void
+        {
+            throw new RuntimeException('snapshot deletion refused');
+        }
+    };
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, [
+        'driver' => 'local', 'root' => $root,
+    ]));
+
+    try {
+        VersionedStorage::directory('crash-retry', static function (FilesystemAdapter $files): void {
+            $files->put('one', 'incomplete');
+
+            throw new RuntimeException('callback failed');
+        }, cleanup: true);
+
+        throw new LogicException('The staged write unexpectedly succeeded.');
+    } catch (RuntimeException $exception) {
+        if ($exception->getMessage() !== 'snapshot deletion refused') {
+            throw $exception;
+        }
     }
-};
-Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, [
-    'driver' => 'local', 'root' => $root,
-]));
 
-try {
-    VersionedStorage::directory('crash-retry', static function (FilesystemAdapter $files): void {
-        $files->put('one', 'incomplete');
+    DB::beginTransaction();
 
-        throw new RuntimeException('callback failed');
-    }, cleanup: true);
+    if (DB::transactionLevel() !== 1
+        || DB::table('versioned_storage_stages')->where('state', 'uploading')->count() !== 1) {
+        throw new LogicException('The writer did not reach the uncommitted recovery state.');
+    }
 
-    throw new LogicException('The staged write unexpectedly succeeded.');
-} catch (RuntimeException $exception) {
-    if ($exception->getMessage() !== 'snapshot deletion refused') {
-        throw $exception;
+    fwrite(STDOUT, "recovery-pending\n");
+    fflush(STDOUT);
+
+    while (true) {
+        sleep(1);
     }
 }
 
-DB::beginTransaction();
-
-if (DB::transactionLevel() !== 1
-    || DB::table('versioned_storage_stages')->where('state', 'uploading')->count() !== 1) {
-    throw new LogicException('The writer did not reach the uncommitted recovery state.');
+if (in_array($mode, ['upload', 'live-upload', 'session-loss'], true)) {
+    installInterruptedUploadDisk($root, $mode, $pause);
 }
 
-fwrite(STDOUT, "recovery-pending\n");
-fflush(STDOUT);
-
-while (true) {
-    sleep(1);
+if ($mode === 'before-publication') {
+    pauseBeforePublication($pause);
 }
+
+if ($mode === 'session-loss') {
+    verifySessionLoss($root);
+}
+
+if (in_array($mode, ['upload', 'live-upload', 'before-publication', 'uncommitted-put', 'committed-put'], true)) {
+    runPublicationCrash($root, $mode, $pause);
+}
+
+runFailedRecoveryCrash($root);

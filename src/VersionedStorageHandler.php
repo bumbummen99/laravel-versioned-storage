@@ -114,12 +114,41 @@ class VersionedStorageHandler
             $this->assertForkable();
         }
         $this->registerResource();
-        $version = (string) Str::uuid();
+        $configuration = $this->uploadConfiguration();
+        $version = $this->reserveDestination($execution, $configuration);
+        $this->recordStage($version, $execution, $grace);
+        $operation = $this->createUploadOperation($version, $execution, $configuration, $grace);
+
+        try {
+            $this->runSnapshotCallback($callback, $version, $operation);
+            $this->completeStage($version, $publish, $cleanup);
+        } catch (Throwable $exception) {
+            $operation->close();
+            $this->handleStageFailure($version, $exception);
+        }
+
+        return new StagedVersion($this, $version);
+    }
+
+    /** @return array<string, mixed> */
+    private function uploadConfiguration(): array
+    {
         $configuration = $this->diskFilesystem->getConfig();
 
         if (! isset($configuration['driver']) && $this->diskFilesystem->getAdapter() instanceof LocalFilesystemAdapter) {
             $configuration['driver'] = 'local';
         }
+
+        return $configuration;
+    }
+
+    /**
+     * @param  array{timeout: int, fork: bool}  $execution
+     * @param  array<string, mixed>  $configuration
+     */
+    private function reserveDestination(array $execution, array $configuration): string
+    {
+        $version = (string) Str::uuid();
         $this->transaction(function () use ($version): void {
             $this->connection()->table('versioned_storage_reservations')->insert(['version' => $version]);
         });
@@ -136,6 +165,13 @@ class VersionedStorageHandler
         if ($exists) {
             throw new RuntimeException("Version path [{$destination}] already exists.");
         }
+
+        return $version;
+    }
+
+    /** @param array{timeout: int, fork: bool} $execution */
+    private function recordStage(string $version, array $execution, int $grace): void
+    {
         $cleanupAfter = (new UploadDeadline($execution['timeout'], $execution['fork'], app(UploadClock::class)))->recoveryAfter($grace);
         $this->transaction(function () use ($version, $cleanupAfter): void {
             $resource = $this->lockResource();
@@ -147,9 +183,17 @@ class VersionedStorageHandler
                 'resource_id' => $resource->id, 'version' => $version, 'state' => 'uploading', 'cleanup_after' => $cleanupAfter,
             ]);
         });
+    }
 
+    /**
+     * @param  array{timeout: int, fork: bool}  $execution
+     * @param  array<string, mixed>  $configuration
+     */
+    private function createUploadOperation(string $version, array $execution, array $configuration, int $grace): UploadOperation
+    {
         $pdo = null;
-        $operation = new UploadOperation(
+
+        return new UploadOperation(
             $execution,
             $configuration,
             function (string $id, string $name, UploadDeadline $deadline) use ($version, $grace, &$pdo): void {
@@ -192,61 +236,66 @@ class VersionedStorageHandler
                 });
             },
         );
+    }
 
-        try {
-            $filesystem = new VersionedFilesystem(
-                $this->diskFilesystem,
-                $this->directory ? $this->path.'/'.$version : $this->path,
-                $operation,
-            );
+    /** @param Closure(FilesystemAdapter, string): mixed $callback */
+    private function runSnapshotCallback(Closure $callback, string $version, UploadOperation $operation): void
+    {
+        $filesystem = new VersionedFilesystem(
+            $this->diskFilesystem,
+            $this->directory ? $this->path.'/'.$version : $this->path,
+            $operation,
+        );
 
-            if ($this->directory) {
-                $filesystem->makeDirectory('');
+        if ($this->directory) {
+            $filesystem->makeDirectory('');
+        }
+        $callback($filesystem, $version);
+        $operation->assertHealthy();
+        $this->assertOutsideTransaction();
+        $operation->close();
+    }
+
+    private function completeStage(string $version, bool $publish, bool $cleanup): void
+    {
+        $this->transaction(function () use ($version, $publish, $cleanup): void {
+            $stage = $this->lockStage($version);
+
+            if ($stage === null || $stage->state !== 'uploading' || $stage->failed
+                || $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
+                throw new RuntimeException("Stage [{$version}] failed or was reclaimed before upload completion.");
             }
-            $callback($filesystem, $version);
-            $operation->assertHealthy();
-            $this->assertOutsideTransaction();
-            $operation->close();
-            $this->transaction(function () use ($version, $publish, $cleanup): void {
-                $stage = $this->lockStage($version);
+            $this->stageQuery($version)->update(['state' => 'ready']);
 
-                if ($stage === null || $stage->state !== 'uploading' || $stage->failed
-                    || $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
-                    throw new RuntimeException("Stage [{$version}] failed or was reclaimed before upload completion.");
-                }
-                $this->stageQuery($version)->update(['state' => 'ready']);
+            if ($publish) {
+                $this->publishStage($version, $cleanup);
+            }
+        });
+    }
 
-                if ($publish) {
-                    $this->publishStage($version, $cleanup);
-                }
-            });
-        } catch (Throwable $exception) {
-            $operation->close();
+    private function handleStageFailure(string $version, Throwable $exception): never
+    {
+        if (! $this->versionQuery()->where('version', $version)->exists()) {
+            try {
+                $this->transaction(function () use ($version, $exception): void {
+                    $stage = $this->lockStage($version);
 
-            if (! $this->versionQuery()->where('version', $version)->exists()) {
-                try {
-                    $this->transaction(function () use ($version, $exception): void {
-                        $stage = $this->lockStage($version);
+                    if ($stage !== null && $stage->state === 'uploading') {
+                        $this->stageQuery($version)->update(['failed' => true]);
 
-                        if ($stage !== null && $stage->state === 'uploading') {
-                            $this->stageQuery($version)->update(['failed' => true]);
-
-                            if (! $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
-                                $this->removeVersion($version, $exception);
-                            }
+                        if (! $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
+                            $this->removeVersion($version, $exception);
                         }
-                    });
-                } catch (Throwable $deletionException) {
-                    report($exception);
+                    }
+                });
+            } catch (Throwable $deletionException) {
+                report($exception);
 
-                    throw $deletionException;
-                }
+                throw $deletionException;
             }
-
-            throw $exception;
         }
 
-        return new StagedVersion($this, $version);
+        throw $exception;
     }
 
     private function assertForkable(): void

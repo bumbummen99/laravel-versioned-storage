@@ -9,7 +9,9 @@ use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\SubprocessFixture;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
-it('holds reader protection until the filesystem operation completes', function (bool $directory, bool $explicit, bool $exists) {
+it('holds reader protection until the filesystem operation completes', function (string $resourceType, string $readOperation) {
+    $directory = $resourceType === 'directory';
+    $exists = $readOperation === 'exists';
     $fixture = new SubprocessFixture('reader-protection');
     $database = $fixture->database;
     $disk = Storage::disk('local');
@@ -22,7 +24,6 @@ it('holds reader protection until the filesystem operation completes', function 
             })
             : VersionedStorage::put('protected', 'original');
 
-        $disk = Storage::disk('local');
         $baseAdapter = $disk->getAdapter();
         $adapter = Mockery::mock($baseAdapter)->makePartial();
         $adapter->shouldReceive($exists ? 'fileExists' : 'read')->once()
@@ -40,10 +41,20 @@ it('holds reader protection until the filesystem operation completes', function 
             });
         Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, $disk->getConfig()));
 
-        $selected = $explicit ? $version : null;
-        $result = $directory
-            ? ($exists ? VersionedStorage::directory('protected')->exists('one', $selected) : VersionedStorage::directory('protected')->get('one', $selected))
-            : ($exists ? VersionedStorage::exists('protected', $selected) : VersionedStorage::get('protected', $selected));
+        if ($directory) {
+            $reader = VersionedStorage::directory('protected');
+            $result = match ($readOperation) {
+                'current' => $reader->get('one'),
+                'version' => $reader->get('one', $version),
+                'exists' => $reader->exists('one', $version),
+            };
+        } else {
+            $result = match ($readOperation) {
+                'current' => VersionedStorage::get('protected'),
+                'version' => VersionedStorage::get('protected', $version),
+                'exists' => VersionedStorage::exists('protected', $version),
+            };
+        }
 
         expect($result)->toBe($exists ? true : 'original');
         expect($process->wait())->toBe(0, $process->getErrorOutput().$process->getOutput());
@@ -56,10 +67,10 @@ it('holds reader protection until the filesystem operation completes', function 
         $fixture->close();
     }
 })->with([
-    'current file read' => [false, false, false],
-    'explicit file read' => [false, true, false],
-    'current directory read' => [true, false, false],
-    'explicit directory read' => [true, true, false],
-    'file existence check' => [false, true, true],
-    'directory child existence check' => [true, true, true],
+    'current file read' => ['file', 'current'],
+    'explicit file read' => ['file', 'version'],
+    'current directory read' => ['directory', 'current'],
+    'explicit directory read' => ['directory', 'version'],
+    'file existence check' => ['file', 'exists'],
+    'directory child existence check' => ['directory', 'exists'],
 ]);
