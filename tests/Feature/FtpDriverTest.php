@@ -7,9 +7,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Config;
 use League\Flysystem\Filesystem;
-use League\Flysystem\Ftp\ConnectionProvider;
 use League\Flysystem\Ftp\FtpAdapter;
 use League\Flysystem\Ftp\FtpConnectionOptions;
+use League\Flysystem\Ftp\FtpConnectionProvider;
 use League\Flysystem\Ftp\UnableToConnectToFtpHost;
 use League\Flysystem\PathPrefixing\PathPrefixedAdapter;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
@@ -80,7 +80,7 @@ it('routes FTP snapshot operations through the selected adapter and prefix', fun
 })->with([false, true]);
 
 it('propagates real FTP adapter connection failures without publishing a version', function () {
-    $provider = Mockery::mock(ConnectionProvider::class);
+    $provider = Mockery::mock(FtpConnectionProvider::class);
     $provider->shouldReceive('createConnection')->atLeast()->once()
         ->andThrow(UnableToConnectToFtpHost::forHost('ftp.example.test', 21, false, 'Connection denied'));
     $adapter = new FtpAdapter(FtpConnectionOptions::fromArray([

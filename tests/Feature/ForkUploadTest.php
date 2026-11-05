@@ -43,6 +43,17 @@ describe('forked uploads', function () {
         });
     });
 
+    it('transfers large callback exceptions without truncating their payload', function () {
+        $message = str_repeat('upload failure details ', 16384);
+
+        expect(fn () => (new ForkUpload)->run(function () use ($message): void {
+            throw new LogicException($message, 123);
+        }, 5))->toThrow(function (LogicException $exception) use ($message): void {
+            expect($exception->getMessage())->toBe($message)
+                ->and($exception->getCode())->toBe(123);
+        });
+    });
+
     it('rejects a nonpositive time limit', function (int $seconds) {
         expect(fn () => (new ForkUpload)->run(function (): void {}, $seconds))
             ->toThrow(InvalidArgumentException::class);
