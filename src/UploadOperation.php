@@ -62,9 +62,10 @@ final class UploadOperation
      * @template TResult
      *
      * @param  Closure(FilesystemOperationExecutor, UploadDeadline): TResult  $execute
+     * @param  (Closure(TResult): void)|null  $cleanup
      * @return TResult
      */
-    private function perform(string $operation, Closure $execute): mixed
+    private function perform(string $operation, Closure $execute, ?Closure $cleanup = null): mixed
     {
         $this->assertHealthy();
         $mutation = in_array($operation, [
@@ -78,7 +79,15 @@ final class UploadOperation
             ($this->begin)($id, $mutation ? $operation : '', $deadline);
             $result = $execute(app(FilesystemOperationExecutor::class), $deadline);
 
-            ($this->complete)($mutation ? $id : '');
+            try {
+                ($this->complete)($mutation ? $id : '');
+            } catch (Throwable $exception) {
+                if ($cleanup !== null) {
+                    $cleanup($result);
+                }
+
+                throw $exception;
+            }
 
             return $result;
         } catch (Throwable $exception) {
@@ -94,20 +103,15 @@ final class UploadOperation
      */
     public function readStream(Closure $callback, FilesystemOperator $filesystem): mixed
     {
-        $stream = null;
-
-        try {
-            return $this->perform('readStream', function (FilesystemOperationExecutor $executor, UploadDeadline $deadline) use ($callback, $filesystem, &$stream) {
-                return $stream = $executor->readStream(
-                    $callback, $filesystem, $this->configuration, $deadline, $this->execution['fork'],
-                );
-            });
-        } catch (Throwable $exception) {
-            if (is_resource($stream)) {
+        return $this->perform(
+            'readStream',
+            fn (FilesystemOperationExecutor $executor, UploadDeadline $deadline): mixed => $executor->readStream(
+                $callback, $filesystem, $this->configuration, $deadline, $this->execution['fork'],
+            ),
+            /** @param resource $stream */
+            static function (mixed $stream): void {
                 fclose($stream);
-            }
-
-            throw $exception;
-        }
+            },
+        );
     }
 }

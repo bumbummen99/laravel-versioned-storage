@@ -12,6 +12,7 @@ use League\Flysystem\FilesystemOperator;
 use SkyRaptor\LaravelVersionedStorage\FilesystemOperationExecutor;
 use SkyRaptor\LaravelVersionedStorage\UploadClock;
 use SkyRaptor\LaravelVersionedStorage\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\UploadOperation;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 it('can inject an operation failure without mocking disk internals or bypassing journaling', function () {
@@ -85,6 +86,7 @@ it('closes a returned read stream when parent acknowledgement fails', function (
 
         return $stream;
     });
+
     app()->instance(FilesystemOperationExecutor::class, $executor);
     Event::listen(TransactionBeginning::class, function () use (&$returned): void {
         if ($returned) {
@@ -105,4 +107,50 @@ it('closes a returned read stream when parent acknowledgement fails', function (
             fclose($stream);
         }
     }
+});
+
+it('hands an acknowledged read stream to the caller without closing it', function () {
+    $filesystem = Storage::disk('local')->getDriver();
+    $filesystem->write('report', 'contents');
+    $acknowledged = false;
+    $operation = new UploadOperation(
+        ['timeout' => 10, 'fork' => false],
+        [],
+        function (): void {},
+        function (string $id) use (&$acknowledged): void {
+            expect($id)->toBe('');
+            $acknowledged = true;
+        },
+    );
+    $stream = $operation->readStream(fn (FilesystemOperator $files) => $files->readStream('report'), $filesystem);
+
+    try {
+        expect($acknowledged)->toBeTrue()
+            ->and(is_resource($stream))->toBeTrue()
+            ->and(stream_get_contents($stream))->toBe('contents');
+        $operation->assertHealthy();
+    } finally {
+        fclose($stream);
+    }
+});
+
+it('does not acknowledge a failed stream execution and marks the operation unhealthy', function () {
+    $acknowledged = false;
+    $failure = new RuntimeException('Read execution failed');
+    $operation = new UploadOperation(
+        ['timeout' => 10, 'fork' => false],
+        [],
+        function (): void {},
+        function () use (&$acknowledged): void {
+            $acknowledged = true;
+        },
+    );
+
+    expect(fn () => $operation->readStream(
+        fn (FilesystemOperator $files) => throw $failure,
+        Storage::disk('local')->getDriver(),
+    ))->toThrow($failure);
+    expect($acknowledged)->toBeFalse();
+    expect(fn () => $operation->assertHealthy())
+        ->toThrow(RuntimeException::class, 'The snapshot failed during a filesystem operation.');
 });
