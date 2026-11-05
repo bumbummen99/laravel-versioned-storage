@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use League\Flysystem\FilesystemOperator;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use League\Flysystem\WhitespacePathNormalizer;
 use PDO;
@@ -123,14 +124,19 @@ class VersionedStorageHandler
             $this->connection()->table('versioned_storage_reservations')->insert(['version' => $version]);
         });
         $destination = $this->path.'/'.$version;
-        $exists = $execution['fork']
-            ? app(ForkUpload::class)->run(static fn (): bool => Storage::build($configuration)->exists($destination), $execution['timeout'])
-            : $this->diskFilesystem->exists($destination);
+        $deadline = new UploadDeadline($execution['timeout'], $execution['fork'], app(UploadClock::class));
+        $exists = app(FilesystemOperationExecutor::class)->execute(
+            static fn (FilesystemOperator $filesystem): bool => $filesystem->has($destination),
+            $this->diskFilesystem->getDriver(),
+            $configuration,
+            $deadline,
+            $execution['fork'],
+        );
 
         if ($exists) {
             throw new RuntimeException("Version path [{$destination}] already exists.");
         }
-        $cleanupAfter = now()->addSeconds($execution['timeout'])->addSeconds($grace);
+        $cleanupAfter = (new UploadDeadline($execution['timeout'], $execution['fork'], app(UploadClock::class)))->recoveryAfter($grace);
         $this->transaction(function () use ($version, $cleanupAfter): void {
             $resource = $this->lockResource();
 
@@ -146,28 +152,23 @@ class VersionedStorageHandler
         $operation = new UploadOperation(
             $execution,
             $configuration,
-            function (string $id, string $name) use ($version, $execution, $grace, &$pdo): void {
+            function (string $id, string $name, UploadDeadline $deadline) use ($version, $grace, &$pdo): void {
                 $this->assertOutsideTransaction();
-                $this->transaction(function () use ($id, $name, $version, $execution, $grace): void {
+                $this->transaction(function () use ($id, $name, $version, $deadline, $grace): void {
                     $stage = $this->lockStage($version);
 
                     if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
                         throw new RuntimeException("Stage [{$version}] failed or was reclaimed before a filesystem operation.");
                     }
 
-                    $deadline = now()->addSeconds($execution['timeout'])->addSeconds($grace)->ceilSecond();
-
-                    if ($execution['fork']) {
-                        // Whole-second alarms can expire just after the nominal deadline.
-                        $deadline->addSecond();
-                    }
+                    $cleanupAfter = $deadline->recoveryAfter($grace);
                     $this->stageQuery($version)->update([
-                        'cleanup_after' => max($stage->cleanup_after, $deadline->toDateTimeString()),
+                        'cleanup_after' => max($stage->cleanup_after, $cleanupAfter->toDateTimeString()),
                     ]);
 
                     if ($name !== '') {
                         $this->connection()->table('versioned_storage_operations')->insert([
-                            'id' => $id, 'version' => $version, 'operation' => $name, 'cleanup_after' => $deadline,
+                            'id' => $id, 'version' => $version, 'operation' => $name, 'cleanup_after' => $cleanupAfter,
                         ]);
                     }
                 });

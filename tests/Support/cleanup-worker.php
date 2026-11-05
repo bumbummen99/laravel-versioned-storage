@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-use Illuminate\Database\Connection;
+use Illuminate\Database\Events\TransactionBeginning;
 use Illuminate\Database\QueryException;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Orchestra\Testbench\Foundation\Application;
 use SkyRaptor\LaravelVersionedStorage\Testing\SynchronousUploadExecution;
@@ -33,18 +33,20 @@ Application::create(resolvingCallback: function ($app) use ($database, $root): v
 }, options: ['extra' => ['providers' => [VersionedStorageServiceProvider::class], 'dont-discover' => ['*']]]);
 app()->instance(UploadExecutionPolicy::class, app(SynchronousUploadExecution::class));
 
-DB::connection()->beforeExecuting(function (string $sql, array $bindings, Connection $connection) use ($directory): void {
-    if ($directory === 'register' && str_starts_with($sql, 'insert or ignore into "versioned_storage_disks"')) {
-        fwrite(STDOUT, "registering\n");
+if (in_array($directory, ['directory', 'file'], true)) {
+    Event::listen(TransactionBeginning::class, function (TransactionBeginning $event): void {
+        if ($event->connection->transactionLevel() !== 1) {
+            return;
+        }
+        fwrite(STDOUT, "transaction-started\n");
         fflush(STDOUT);
-    } elseif (str_starts_with($sql, 'insert into "versioned_storage_reservations"')
-        || str_starts_with($sql, 'update "versioned_storage_resources" set "key"')) {
-        fwrite(STDOUT, "publishing\n");
-        fflush(STDOUT);
-    }
-});
+    });
+}
 
 if ($directory === 'register') {
+    fwrite(STDOUT, "registering\n");
+    fflush(STDOUT);
+
     try {
         VersionedStorage::put($argv[4], 'child contents');
         fwrite(STDOUT, "accepted\n");

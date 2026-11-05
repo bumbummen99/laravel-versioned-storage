@@ -26,12 +26,12 @@ it('routes FTP snapshot operations through the selected adapter and prefix', fun
     $other = Mockery::mock(FtpAdapter::class);
     Storage::set('other-ftp', new FilesystemAdapter(new Filesystem($other), $other));
     $snapshot = (object) ['path' => null];
-    $adapter->shouldReceive('fileExists')->twice()->with(Mockery::on(function (string $path) use ($snapshot): bool {
+    $adapter->shouldReceive('fileExists')->atLeast()->once()->with(Mockery::on(function (string $path) use ($snapshot): bool {
         $snapshot->path = $path;
 
         return str_starts_with($path, 'tenant/reports/');
     }))->andReturn(false);
-    $adapter->shouldReceive('directoryExists')->twice()->with(Mockery::on(
+    $adapter->shouldReceive('directoryExists')->atLeast()->once()->with(Mockery::on(
         fn (string $path): bool => $path === $snapshot->path,
     ))->andReturn(false);
 

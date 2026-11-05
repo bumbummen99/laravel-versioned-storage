@@ -45,7 +45,7 @@ it('holds reader protection until the filesystem operation completes', function 
                 $process->setTimeout(10);
                 $process->start();
 
-                if (! $process->waitUntil(fn (string $type, string $output): bool => str_contains($output, 'publishing'))) {
+                if (! $process->waitUntil(fn (string $type, string $output): bool => str_contains($output, 'transaction-started'))) {
                     throw new RuntimeException('Worker failed: '.$process->getErrorOutput().$process->getOutput());
                 }
                 usleep(100000);

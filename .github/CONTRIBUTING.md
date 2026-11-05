@@ -52,6 +52,26 @@ composer test
 - `tests/ArchTest.php`: architecture constraints, separate from runtime integration tests.
 - `tests/Support`: fixtures and subprocess helpers, not a test suite.
 
+Prefer public behavior assertions (contents, publication, preserved files, and
+retryable failures) over exact query or adapter-call counts. Keep exact counts
+only in tests specifically covering delegation or the cleanup query budget.
+FTP prefix tests validate each requested path without prescribing how many
+existence checks an implementation performs.
+
+Filesystem execution and deadline calculation are internal testing seams:
+`FilesystemOperationExecutor` is resolved through the application container,
+while `UploadDeadline` uses an injectable `UploadClock` for wall and monotonic
+time. Execution overrides must not bypass parent-owned operation journals or
+publication checks. Use deterministic clock tests for deadline arithmetic;
+keep real fork/FPM tests for OS-enforced termination and stream transfer.
+Neither seam is a replacement for real database or filesystem integration.
+
+Subprocess fixtures should signal progress explicitly rather than recognizing
+SQL strings. The reader-lock fixture uses Laravel's transaction-beginning
+event to signal that it reached a transaction boundary, then verifies that
+the worker stays blocked until the protected read completes. Keep this
+implementation-sensitive synchronization isolated in the fixture.
+
 Run all Pest tests without the additional quality checks:
 
 ```bash
