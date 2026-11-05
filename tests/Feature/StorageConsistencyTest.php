@@ -223,15 +223,15 @@ it('allows UUIDs in resource roots and arbitrary nested snapshot contents', func
         ->toBe('contents');
 });
 
-it('rejects a root inside an unpublished snapshot without invoking its callback', function () {
-    VersionedStorage::directory('staging', function (FilesystemAdapter $files): void {
+it('rejects a root inside a completed unpublished stage before writing', function () {
+    $stage = VersionedStorage::stageDirectory('staging', function (FilesystemAdapter $files): void {
         $files->put('one', 'contents');
-        $version = basename($files->path(''));
-
-        expect(fn () => VersionedStorage::put("staging/{$version}/nested", 'unrelated'))
-            ->toThrow(InvalidArgumentException::class, 'overlaps registered resource');
-        expect($files->allFiles())->toBe(['one']);
     });
+
+    expect(fn () => VersionedStorage::put("staging/{$stage->version}/nested", 'unrelated'))
+        ->toThrow(InvalidArgumentException::class, 'overlaps registered resource');
+    Storage::disk('local')->assertExists("staging/{$stage->version}/one");
+    $stage->publish();
 
     expect(VersionedStorage::directory('staging')->get('one'))->toBe('contents');
 });
@@ -285,28 +285,33 @@ it('serializes conflicting first registrations from separate processes', functio
 
         $existing = $parentFirst ? 'reports' : 'reports/monthly';
         $rejected = $parentFirst ? 'reports/monthly' : 'reports';
-        $connection->beginTransaction();
-        $version = VersionedStorage::put($existing, 'original');
         $disk = Storage::disk('local');
-        $process = new Process([
-            PHP_BINARY, __DIR__.'/../Support/cleanup-worker.php',
-            $database, $disk->path(''), 'register', $rejected,
-        ]);
-        $process->setTimeout(10);
-        $process->start();
+        $stage = VersionedStorage::stageDirectory($existing, function (FilesystemAdapter $files) use (
+            &$process,
+            $database,
+            $disk,
+            $rejected,
+        ): void {
+            $files->put('one', 'original');
+            $process = new Process([
+                PHP_BINARY, __DIR__.'/../Support/cleanup-worker.php',
+                $database, $disk->path(''), 'register', $rejected,
+            ]);
+            $process->setTimeout(10);
+            $process->start();
 
-        expect($process->waitUntil(fn (string $type, string $output): bool => str_contains($output, 'registering')))
-            ->toBeTrue($process->getErrorOutput().$process->getOutput());
-        usleep(100000);
-        expect($process->isRunning())->toBeTrue($process->getErrorOutput().$process->getOutput())
-            ->and($process->getOutput())->not->toContain('finished');
-
-        $connection->commit();
+            expect($process->waitUntil(fn (string $type, string $output): bool => str_contains($output, 'registering')))
+                ->toBeTrue($process->getErrorOutput().$process->getOutput());
+            usleep(100000);
+            expect($process->isRunning())->toBeTrue($process->getErrorOutput().$process->getOutput())
+                ->and($process->getOutput())->not->toContain('finished');
+        }, disk: 'local');
 
         expect($process->wait())->toBe(0, $process->getErrorOutput().$process->getOutput())
             ->and($process->getOutput())->toContain('rejected:')->not->toContain("accepted\n")
-            ->and(VersionedStorage::get($existing))->toBe('original')
-            ->and($disk->allFiles())->toBe(["{$existing}/{$version}"])
+            ->and($stage->publish())->toBe($stage->version)
+            ->and(VersionedStorage::directory($existing)->get('one'))->toBe('original')
+            ->and($disk->allFiles("{$existing}/{$stage->version}"))->toBe(["{$existing}/{$stage->version}/one"])
             ->and($connection->table('versioned_storage_resources')->count())->toBe(1);
     } finally {
         if ($connection->transactionLevel() > 0) {
@@ -320,15 +325,19 @@ it('serializes conflicting first registrations from separate processes', functio
     }
 })->with([true, false]);
 
-it('rolls staged files back on the disk that received the write even after its name is rebound', function () {
+it('keeps a rolled back stage bound to the original disk after its name is rebound', function () {
     $original = Storage::disk('local');
     $replacement = Storage::fake('replacement');
+    $stage = VersionedStorage::stage('rebound', 'staged');
     DB::beginTransaction();
-    $version = VersionedStorage::put('rebound', 'staged');
+    $version = $stage->publish();
     $replacement->put("rebound/{$version}", 'unrelated');
     Storage::set('local', $replacement);
     DB::rollBack();
 
+    expect($original->exists("rebound/{$version}"))->toBeTrue()
+        ->and($replacement->get("rebound/{$version}"))->toBe('unrelated');
+    $stage->discard();
     expect($original->exists("rebound/{$version}"))->toBeFalse()
         ->and($replacement->get("rebound/{$version}"))->toBe('unrelated');
 });
@@ -353,11 +362,11 @@ it('does not automatically clean either disk when its name is rebound before com
     $first = VersionedStorage::put('rebound-commit', 'original');
     $replacement = Storage::fake('replacement');
     $replacement->put("rebound-commit/{$first}", 'unrelated');
+    $stage = VersionedStorage::stage('rebound-commit', 'replacement');
     DB::beginTransaction();
-    $second = VersionedStorage::put('rebound-commit', 'replacement', true);
     Storage::set('local', $replacement);
+    $second = $stage->publish(cleanup: true);
     DB::commit();
-    app()->terminate();
     expect($original->exists("rebound-commit/{$first}"))->toBeTrue()
         ->and($replacement->get("rebound-commit/{$first}"))->toBe('unrelated');
     Storage::set('local', $original);
@@ -389,6 +398,7 @@ it('discovers and retries pending deletions on the primary despite replica lag',
 
 it('does not delete committed data based on a stale replica after a commit listener throws', function () {
     VersionedStorage::put('replica-failure', 'original');
+    $stage = VersionedStorage::stage('replica-failure', 'committed');
     $connection = DB::connection();
     $replica = new PDO('sqlite::memory:');
     $replica->exec('CREATE TABLE versioned_storage_resources (id INTEGER, key TEXT)');
@@ -401,7 +411,7 @@ it('does not delete committed data based on a stale replica after a commit liste
     });
 
     try {
-        expect(fn () => VersionedStorage::put('replica-failure', 'committed'))
+        expect(fn () => $stage->publish())
             ->toThrow(RuntimeException::class, 'post-commit failure');
     } finally {
         Event::forget(TransactionCommitted::class);

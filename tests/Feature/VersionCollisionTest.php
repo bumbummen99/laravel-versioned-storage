@@ -116,15 +116,17 @@ it('does not reuse a retired version UUID after cleanup', function () {
     }
 });
 
-it('preserves an outer transaction after a duplicate version reservation fails', function () {
+it('preserves an outer transaction when an upload is rejected after publication starts', function () {
     $uuid = Str::uuid();
     Str::createUuidsUsing(fn () => $uuid);
     $connection = DB::connection();
-    $connection->beginTransaction();
+    $stage = VersionedStorage::stage('collision', 'original');
 
     try {
-        $version = VersionedStorage::put('collision', 'original');
-        expect(fn () => VersionedStorage::put('collision', 'replacement'))->toThrow(RuntimeException::class);
+        $connection->beginTransaction();
+        $version = $stage->publish();
+        expect(fn () => VersionedStorage::put('collision', 'replacement'))
+            ->toThrow(RuntimeException::class, 'Uploads cannot run inside a metadata transaction');
         expect($connection->transactionLevel())->toBe(1)
             ->and(VersionedStorage::get('collision'))->toBe('original');
         $connection->commit();

@@ -58,6 +58,20 @@ composer test:unit
 
 `composer test` runs static analysis, formatting checks, type coverage, and all Pest suites. `composer test:unit` runs all Pest suites without the additional quality checks.
 
+### Real PHP-FPM timeout tests
+
+Upload execution tests use the Workbench application: CLI scenarios and real queue workers run through `vendor/bin/testbench`, while the development server and FPM share a minimal HTTP bootstrap into that same application. Test-only commands, routes, and configuration are enabled by `VERSIONED_STORAGE_TEST_DB` and require `VERSIONED_STORAGE_TEST_ROOT`; the tests supply isolated temporary resources. Normal Workbench sessions do not expose these scenarios, and the tests do not invoke `workbench:build` or its database reset steps.
+
+Install PHP-FPM matching your CLI PHP version and Nginx (included in the devcontainer), then run:
+
+```bash
+vendor/bin/pest --group=fpm
+```
+
+These tests start isolated, unprivileged FPM and Nginx processes with temporary configuration, a file-backed SQLite database, and a local test disk. They do not modify system server configuration or use existing server instances. They are also included in the normal suite, but skip when either binary is unavailable or on Windows.
+
+The scenarios exercise `max_execution_time` from a temporary `php.ini`, `request_terminate_timeout` from an FPM pool, and Nginx's `fastcgi_read_timeout`. They verify successful uploads, PHP termination of CPU-bound work, FPM termination during blocked work, and that an Nginx 504 does not terminate an upload. Incomplete journals and partial files survive until the persisted cleanup deadline, then cleanup removes both; successful uploads remain readable. The Nginx-only scenario deliberately disables FPM termination to demonstrate that PHP and Nginx limits alone do not provide the required blocked-I/O bound.
+
 ## Benchmarks
 
 Compare the previous commit (`HEAD^`) against the current working tree, including uncommitted changes:
@@ -68,7 +82,7 @@ composer benchmark
 
 The command creates a temporary baseline worktree, benchmarks both versions using the current harness and dependencies, prints the comparison, and removes the worktree even if benchmarking fails. Results remain under the ignored `build/phpbench` directory. Set `VERSIONED_STORAGE_BENCHMARK_BASE` to choose another baseline, such as `HEAD` to measure only uncommitted changes. PHPBench options are forwarded to both runs, for example `composer benchmark -- --filter=benchReadFile`.
 
-The benchmarks use an in-memory SQLite database and a local fake disk. Each iteration starts with fresh fixtures; application boot, migrations, fixture creation, and teardown are outside the timed operation. Subjects cover file reads, existence checks, version listing, new resource registration, file/directory writes, directory child reads, and replacements with cleanup. They measure local package overhead, not remote-server latency. Peak memory includes the bootstrapped application.
+The benchmarks use a temporary file-backed SQLite database and an isolated, named local disk. Each iteration starts with fresh fixtures; application boot, migrations, fixture creation, and teardown are outside the timed operation. Subjects cover file reads, existence checks, version listing, new resource registration, file/directory writes, directory child reads, and replacements with cleanup. They exercise the real CLI execution policy, including supervised upload forks on revisions that support them, and therefore require Unix with PCNTL, POSIX, and sockets. They measure local package and CLI supervision overhead, not PHP-FPM throughput or remote-server latency. Peak memory includes the bootstrapped application, not aggregate child-process memory.
 
 Replacement-with-cleanup subjects explicitly call the synchronous cleanup API after publication so they include actual deletion costs, not just retirement flags. Other writes do not automatically delete retired snapshots.
 

@@ -5,7 +5,8 @@
     "customizations": {
         "vscode": {
             "extensions": [
-                "bmewburn.vscode-intelephense-client"
+                "bmewburn.vscode-intelephense-client",
+                "ms-azuretools.vscode-containers"
             ],
             "settings": {}
         }

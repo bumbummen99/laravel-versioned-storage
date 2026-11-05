@@ -21,8 +21,10 @@
         "illuminate/concurrency": "^12.0||^13.0",
         "illuminate/database": "^12.0||^13.0",
         "illuminate/filesystem": "^12.0||^13.0",
+        "illuminate/queue": "^12.0||^13.0",
         "illuminate/support": "^12.0||^13.0",
-        "league/flysystem-path-prefixing": "^3.0"
+        "league/flysystem-path-prefixing": "^3.0",
+        "spatie/fork": "^1.2"
     },
     "require-dev": {
         "larastan/larastan": "^3.9",

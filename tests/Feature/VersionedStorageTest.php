@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Contracts\Filesystem\FileNotFoundException;
 use Illuminate\Database\QueryException;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
@@ -92,6 +93,13 @@ it('leaves the previous directory current and removes staged files when a callba
     expect(VersionedStorage::directory('foo/bar')->versions())->toBe([$first])
         ->and(VersionedStorage::directory('foo/bar')->get('one'))->toBe('original')
         ->and(Storage::disk('local')->allFiles('foo/bar'))->toBe(["foo/bar/{$first}/one"]);
+    $stage = DB::table('versioned_storage_stages')->where('state', 'uploading')->first();
+    expect($stage)->not->toBeNull();
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->value('state'))->toBe('uploading');
+    $this->travelTo(Carbon::parse($stage->cleanup_after));
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeFalse();
 });
 
 it('does not publish failed filesystem writes even on a non-throwing disk', function () {
@@ -107,7 +115,7 @@ it('does not publish failed filesystem writes even on a non-throwing disk', func
         ->and(DB::table('versioned_storage_resources')->value('current_version'))->toBeNull();
 });
 
-it('can retry staged snapshot deletion after both a directory callback and its cleanup fail', function (string $outer) {
+it('can retry staged snapshot deletion after both a directory callback and its cleanup fail', function () {
     $first = VersionedStorage::directory('callback-retry', function (FilesystemAdapter $files): void {
         $files->put('one', 'original');
     });
@@ -116,11 +124,6 @@ it('can retry staged snapshot deletion after both a directory callback and its c
     $adapter->shouldReceive('deleteDirectory')->once()
         ->andThrow(new RuntimeException('snapshot deletion refused'));
     Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, $disk->getConfig()));
-
-    if ($outer !== 'none') {
-        DB::beginTransaction();
-        DB::beginTransaction();
-    }
 
     try {
         expect(fn () => VersionedStorage::directory('callback-retry', function (FilesystemAdapter $files): void {
@@ -138,24 +141,19 @@ it('can retry staged snapshot deletion after both a directory callback and its c
         ->and(VersionedStorage::directory('callback-retry')->get('one'))->toBe('original')
         ->and($disk->get($staged[0].'/one'))->toBe('incomplete');
 
-    if ($outer !== 'none') {
-        DB::rollBack();
-
-        if ($outer === 'commit') {
-            DB::commit();
-        } else {
-            DB::rollBack();
-        }
-    }
-
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    $disk->assertExists($staged[0].'/one');
+    $stage = DB::table('versioned_storage_stages')->where('version', basename($staged[0]))->first();
+    expect($stage->state)->toBe('uploading');
+    $this->travelTo(Carbon::parse($stage->cleanup_after));
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     $disk->assertMissing($staged[0]);
     $disk->assertExists("callback-retry/{$first}/one");
     expect(VersionedStorage::directory('callback-retry')->get('one'))->toBe('original');
-})->with(['none', 'commit', 'rollback']);
+});
 
-it('can retry staged snapshot deletion after publication and its cleanup fail', function (bool $directory, bool $newResource, string $outer) {
+it('can retry staged snapshot deletion after publication and its cleanup fail', function (bool $directory, bool $newResource) {
     $write = static fn (string $contents): string => $directory
         ? VersionedStorage::directory('publication-retry', function (FilesystemAdapter $files) use ($contents): void {
             $files->put('one', $contents);
@@ -170,25 +168,10 @@ it('can retry staged snapshot deletion after publication and its cleanup fail', 
     $connection = DB::connection();
     $connection->statement("CREATE TRIGGER reject_storage_version BEFORE INSERT ON versioned_storage_versions WHEN NEW.pending_delete = 0 BEGIN SELECT RAISE(FAIL, 'publication failed'); END");
 
-    if ($outer !== 'none') {
-        DB::beginTransaction();
-        DB::beginTransaction();
-    }
-
     try {
         expect(fn () => $write('unpublished'))->toThrow(RuntimeException::class, 'snapshot deletion refused');
     } finally {
         Storage::set('local', $disk);
-
-        if ($outer !== 'none') {
-            DB::rollBack();
-
-            if ($outer === 'commit') {
-                DB::commit();
-            } else {
-                DB::rollBack();
-            }
-        }
 
         $connection->statement('DROP TRIGGER reject_storage_version');
     }
@@ -197,14 +180,19 @@ it('can retry staged snapshot deletion after publication and its cleanup fail', 
     expect($directory
         ? VersionedStorage::directory('publication-retry')->versions()
         : VersionedStorage::versions('publication-retry'))->toBe($expected);
-    $pending = DB::table('versioned_storage_versions')->where('pending_delete', true)->pluck('version')->all();
+    $pending = DB::table('versioned_storage_stages')->where('state', 'uploading')->pluck('version')->all();
     expect($pending)->toHaveCount(1)
         ->and(DB::table('versioned_storage_reservations')->where('version', $pending[0])->exists())->toBeTrue();
     $disk->assertExists('publication-retry/'.$pending[0]);
 
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    $disk->assertExists('publication-retry/'.$pending[0]);
+    expect(DB::table('versioned_storage_stages')->where('version', $pending[0])->value('state'))->toBe('uploading');
+    $this->travelTo(Carbon::parse(DB::table('versioned_storage_stages')->where('version', $pending[0])->value('cleanup_after')));
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
 
     $disk->assertMissing('publication-retry/'.$pending[0]);
+    expect(DB::table('versioned_storage_stages')->where('version', $pending[0])->exists())->toBeFalse();
     expect(DB::table('versioned_storage_versions')->where('pending_delete', true)->exists())->toBeFalse();
 
     if ($first !== null) {
@@ -212,7 +200,7 @@ it('can retry staged snapshot deletion after publication and its cleanup fail', 
             ? VersionedStorage::directory('publication-retry')->get('one')
             : VersionedStorage::get('publication-retry'))->toBe('original');
     }
-})->with([false, true])->with([false, true])->with(['none', 'commit', 'rollback']);
+})->with([false, true])->with([false, true]);
 
 it('removes a staged version if its database publication fails', function () {
     $first = VersionedStorage::put('file', 'original');
@@ -229,6 +217,13 @@ it('removes a staged version if its database publication fails', function () {
     expect(VersionedStorage::get('file'))->toBe('original')
         ->and(VersionedStorage::versions('file'))->toBe([$first])
         ->and(Storage::disk('local')->allFiles('file'))->toBe(["file/{$first}"]);
+    $stage = DB::table('versioned_storage_stages')->where('state', 'uploading')->first();
+    expect($stage)->not->toBeNull();
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeTrue();
+    $this->travelTo(Carbon::parse($stage->cleanup_after));
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeFalse();
 });
 
 it('reports cleanup failures without deleting the newly published current version', function () {
@@ -297,17 +292,16 @@ it('rejects file and directory resources sharing the same root', function (bool 
     }
 })->with([true, false])->with([true, false]);
 
-it('only cleans published versions when another writer is still preparing its snapshot', function () {
-    $inner = null;
-    $outer = VersionedStorage::directory('overlap', function (FilesystemAdapter $files) use (&$inner): void {
+it('preserves completed stages while retiring previously published snapshots', function () {
+    $staged = VersionedStorage::stageDirectory('overlap', function (FilesystemAdapter $files): void {
         $files->put('one', 'outer');
-        $inner = VersionedStorage::directory('overlap', function (FilesystemAdapter $other): void {
-            $other->put('one', 'inner');
-        }, true);
-
-        expect(VersionedStorage::directory('overlap')->get('one'))->toBe('inner');
         $files->put('two', 'complete');
+    });
+    $inner = VersionedStorage::directory('overlap', function (FilesystemAdapter $other): void {
+        $other->put('one', 'inner');
     }, true);
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    $outer = $staged->publish(cleanup: true);
 
     expect(VersionedStorage::directory('overlap')->get('one'))->toBe('outer')
         ->and(VersionedStorage::directory('overlap')->get('two'))->toBe('complete')
@@ -322,10 +316,14 @@ it('uses the configured metadata connection for migrations and operations', func
     $cleanupMigration = require __DIR__.'/../../database/migrations/2026_01_01_000001_add_pending_delete_to_versioned_storage_versions.php';
     $disksMigration = require __DIR__.'/../../database/migrations/2026_01_01_000002_create_versioned_storage_disks_table.php';
     $reservationsMigration = require __DIR__.'/../../database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php';
+    $stagesMigration = require __DIR__.'/../../database/migrations/2026_01_01_000004_create_versioned_storage_stages_table.php';
+    $deadlineMigration = require __DIR__.'/../../database/migrations/2026_01_01_000005_add_cleanup_after_to_versioned_storage_stages.php';
     $migration->up();
     $cleanupMigration->up();
     $disksMigration->up();
     $reservationsMigration->up();
+    $stagesMigration->up();
+    $deadlineMigration->up();
 
     try {
         $version = VersionedStorage::put('connection', 'contents');
@@ -333,6 +331,8 @@ it('uses the configured metadata connection for migrations and operations', func
             ->and(DB::connection('metadata')->table('versioned_storage_versions')->value('version'))->toBe($version)
             ->and(DB::connection('testing')->table('versioned_storage_versions')->count())->toBe(0);
     } finally {
+        $deadlineMigration->down();
+        $stagesMigration->down();
         $reservationsMigration->down();
         $disksMigration->down();
         $cleanupMigration->down();

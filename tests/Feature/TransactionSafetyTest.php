@@ -15,19 +15,24 @@ use League\Flysystem\Filesystem;
 use League\Flysystem\UnableToDeleteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
-it('leaves committed retired snapshots for the command and removes staged files on rollback', function () {
+it('publishes pre-uploaded snapshots transactionally and retains rolled back stages', function () {
     $first = VersionedStorage::put('rollback', 'original');
+    $rolledBack = VersionedStorage::stage('rollback', 'replacement');
     DB::beginTransaction();
-    $second = VersionedStorage::put('rollback', 'replacement', true);
+    $second = $rolledBack->publish(cleanup: true);
     Storage::disk('local')->assertExists("rollback/{$first}");
     DB::rollBack();
 
     expect(VersionedStorage::get('rollback'))->toBe('original')
-        ->and(VersionedStorage::versions('rollback'))->toBe([$first]);
+        ->and(VersionedStorage::versions('rollback'))->toBe([$first])
+        ->and(DB::table('versioned_storage_stages')->where('version', $second)->value('state'))->toBe('ready');
+    Storage::disk('local')->assertExists("rollback/{$second}");
+    $rolledBack->discard();
     Storage::disk('local')->assertMissing("rollback/{$second}");
 
-    DB::transaction(function () use ($first): void {
-        VersionedStorage::put('rollback', 'committed', true);
+    $committed = VersionedStorage::stage('rollback', 'committed');
+    DB::transaction(function () use ($first, $committed): void {
+        $committed->publish(cleanup: true);
         Storage::disk('local')->assertExists("rollback/{$first}");
     });
 
@@ -39,27 +44,36 @@ it('leaves committed retired snapshots for the command and removes staged files 
     Storage::disk('local')->assertMissing("rollback/{$first}");
 });
 
-it('tracks nested savepoint commits and rollbacks at their correct level', function () {
+it('tracks nested savepoint publication rollbacks without deleting completed stages', function () {
     $first = VersionedStorage::put('nested', 'original');
+    $outer = VersionedStorage::stage('nested', 'outer');
+    $inner = VersionedStorage::stage('nested', 'inner');
+    $innerCommitted = VersionedStorage::stage('nested', 'inner committed');
     DB::beginTransaction();
-    $second = VersionedStorage::put('nested', 'outer', true);
+    $outer->publish(cleanup: true);
     DB::beginTransaction();
-    $third = VersionedStorage::put('nested', 'inner', true);
+    $inner->publish(cleanup: true);
     DB::rollBack();
-    Storage::disk('local')->assertMissing("nested/{$third}");
+    Storage::disk('local')->assertExists("nested/{$inner->version}");
+    expect(DB::table('versioned_storage_stages')->where('version', $inner->version)->value('state'))->toBe('ready');
     expect(VersionedStorage::get('nested'))->toBe('outer');
     DB::beginTransaction();
-    $fourth = VersionedStorage::put('nested', 'inner committed', true);
+    $innerCommitted->publish(cleanup: true);
     DB::commit();
     DB::rollBack();
 
     expect(VersionedStorage::get('nested'))->toBe('original')
         ->and(VersionedStorage::versions('nested'))->toBe([$first]);
-    Storage::disk('local')->assertMissing(["nested/{$second}", "nested/{$fourth}"]);
+    foreach ([$outer, $inner, $innerCommitted] as $stage) {
+        Storage::disk('local')->assertExists("nested/{$stage->version}");
+        $stage->discard();
+        Storage::disk('local')->assertMissing("nested/{$stage->version}");
+    }
 });
 
-it('does not delete a committed version when a transaction committed listener throws', function () {
-    VersionedStorage::put('committed', 'original');
+it('keeps publication committed when a transaction committed listener throws and retries idempotently', function () {
+    $first = VersionedStorage::put('committed', 'original');
+    $stage = VersionedStorage::stage('committed', 'replacement');
     Event::listen(TransactionCommitted::class, function (TransactionCommitted $event): void {
         if ($event->connection->transactionLevel() === 0) {
             throw new RuntimeException('listener failed');
@@ -67,7 +81,7 @@ it('does not delete a committed version when a transaction committed listener th
     });
 
     try {
-        expect(fn () => VersionedStorage::put('committed', 'replacement'))
+        expect(fn () => $stage->publish())
             ->toThrow(RuntimeException::class, 'listener failed');
     } finally {
         Event::forget(TransactionCommitted::class);
@@ -75,10 +89,16 @@ it('does not delete a committed version when a transaction committed listener th
 
     expect(VersionedStorage::get('committed'))->toBe('replacement')
         ->and(VersionedStorage::versions('committed'))->toHaveCount(2);
+    $later = VersionedStorage::put('committed', 'later');
+    expect($stage->publish())->toBe($stage->version)
+        ->and(VersionedStorage::get('committed'))->toBe('later')
+        ->and(VersionedStorage::versions('committed'))->toBe([$first, $stage->version, $later]);
 });
 
-it('cleans staged versions when a nested commit listener throws and the outer transaction rolls back', function () {
+it('restores a completed stage when a nested publication listener throws and the outer transaction rolls back', function () {
     $first = VersionedStorage::put('nested-listener', 'original');
+    $stage = VersionedStorage::stage('nested-listener', 'replacement');
+    DB::beginTransaction();
     Event::listen(TransactionCommitted::class, function (TransactionCommitted $event): void {
         if ($event->connection->transactionLevel() === 1) {
             throw new RuntimeException('nested listener failed');
@@ -86,20 +106,29 @@ it('cleans staged versions when a nested commit listener throws and the outer tr
     });
 
     try {
-        expect(fn () => DB::transaction(fn () => VersionedStorage::put('nested-listener', 'replacement', true)))
+        expect(fn () => $stage->publish(cleanup: true))
             ->toThrow(RuntimeException::class, 'nested listener failed');
     } finally {
         Event::forget(TransactionCommitted::class);
+        DB::rollBack();
     }
 
+    $files = Storage::disk('local')->allFiles('nested-listener');
+    sort($files);
+    $expectedFiles = ["nested-listener/{$first}", "nested-listener/{$stage->version}"];
+    sort($expectedFiles);
+
     expect(VersionedStorage::get('nested-listener'))->toBe('original')
-        ->and(Storage::disk('local')->allFiles('nested-listener'))->toBe(["nested-listener/{$first}"]);
+        ->and($files)->toBe($expectedFiles)
+        ->and(DB::table('versioned_storage_stages')->where('version', $stage->version)->value('state'))->toBe('ready');
+    $stage->discard();
 });
 
 it('keeps rollback handling bound to the original metadata connection', function () {
     $first = VersionedStorage::put('connection-change', 'original');
+    $stage = VersionedStorage::stage('connection-change', 'replacement');
     DB::beginTransaction();
-    $second = VersionedStorage::put('connection-change', 'replacement', true);
+    $second = $stage->publish(cleanup: true);
     config()->set('laravel-versioned-storage.connection', 'not-configured');
 
     try {
@@ -109,14 +138,16 @@ it('keeps rollback handling bound to the original metadata connection', function
     }
 
     expect(VersionedStorage::versions('connection-change'))->toBe([$first]);
-    Storage::disk('local')->assertMissing("connection-change/{$second}");
+    Storage::disk('local')->assertExists("connection-change/{$second}");
+    $stage->discard();
 });
 
 it('does not delete a committed version when an after commit callback throws', function () {
     $first = VersionedStorage::put('after-commit', 'original');
+    $stage = VersionedStorage::stage('after-commit', 'contents');
     DB::beginTransaction();
     DB::afterCommit(fn () => throw new RuntimeException('after commit failed'));
-    $version = VersionedStorage::put('after-commit', 'contents', true);
+    $version = $stage->publish(cleanup: true);
     expect(fn () => DB::commit())->toThrow(RuntimeException::class, 'after commit failed');
     Storage::disk('local')->assertExists("after-commit/{$first}");
     DB::beginTransaction();
@@ -136,6 +167,7 @@ it('removes staged files when an application after rollback callback throws', fu
     }
 
     $first = VersionedStorage::put('rollback-callback', 'original');
+    $stage = VersionedStorage::stage('rollback-callback', 'staged');
     $connection->beginTransaction();
     $callbackCalled = false;
     $connection->afterRollBack(function () use (&$callbackCalled): void {
@@ -145,7 +177,7 @@ it('removes staged files when an application after rollback callback throws', fu
             throw new RuntimeException('rollback callback failed');
         }
     });
-    $second = VersionedStorage::put('rollback-callback', 'staged', true);
+    $second = $stage->publish(cleanup: true);
 
     expect(fn () => $connection->rollBack())
         ->toThrow(RuntimeException::class, 'rollback callback failed');
@@ -156,18 +188,20 @@ it('removes staged files when an application after rollback callback throws', fu
         ->and(VersionedStorage::versions('rollback-callback'))->toBe([$first])
         ->and(VersionedStorage::get('rollback-callback'))->toBe('original');
     Storage::disk('local')->assertExists("rollback-callback/{$first}");
-    Storage::disk('local')->assertMissing("rollback-callback/{$second}");
+    Storage::disk('local')->assertExists("rollback-callback/{$second}");
+    $stage->discard();
 });
 
-it('restores transaction state and removes staged files when a before commit listener throws', function () {
+it('restores transaction state and retains a completed stage when a before commit listener throws', function () {
     $first = VersionedStorage::put('precommit-failure', 'original');
+    $stage = VersionedStorage::stage('precommit-failure', 'staged');
     $connection = DB::connection();
     Event::listen(TransactionCommitting::class, function (): void {
         throw new RuntimeException('before commit failed');
     });
 
     try {
-        expect(fn () => VersionedStorage::put('precommit-failure', 'staged', true))
+        expect(fn () => $stage->publish(cleanup: true))
             ->toThrow(RuntimeException::class, 'before commit failed');
 
         $state = [
@@ -175,6 +209,7 @@ it('restores transaction state and removes staged files when a before commit lis
             'pdo_in_transaction' => $connection->getPdo()->inTransaction(),
             'files' => Storage::disk('local')->allFiles('precommit-failure'),
         ];
+        sort($state['files']);
     } finally {
         Event::forget(TransactionCommitting::class);
 
@@ -191,18 +226,21 @@ it('restores transaction state and removes staged files when a before commit lis
         ->and($state)->toBe([
             'laravel_level' => 0,
             'pdo_in_transaction' => false,
-            'files' => ["precommit-failure/{$first}"],
+            'files' => collect(["precommit-failure/{$first}", "precommit-failure/{$stage->version}"])->sort()->values()->all(),
         ]);
+    $stage->discard();
 });
 
 it('restores the original transaction depth when a transaction beginning listener throws', function (bool $outerTransaction, string $operation) {
     $connection = DB::connection();
     $first = VersionedStorage::put('beginning-failure', 'original');
+    $stage = VersionedStorage::stage('beginning-failure', 'unpublished');
+    $outerStage = $outerTransaction ? VersionedStorage::stage('outer-work', 'uncommitted contents') : null;
     $outerVersion = null;
 
     if ($outerTransaction) {
         $connection->beginTransaction();
-        $outerVersion = VersionedStorage::put('outer-work', 'uncommitted contents');
+        $outerVersion = $outerStage->publish();
     }
 
     $initialLevel = $connection->transactionLevel();
@@ -214,7 +252,7 @@ it('restores the original transaction depth when a transaction beginning listene
         expect(fn () => match ($operation) {
             'read' => VersionedStorage::get('beginning-failure'),
             'exists' => VersionedStorage::exists('beginning-failure'),
-            'write' => VersionedStorage::put('beginning-failure', 'unpublished', true),
+            'write' => $stage->publish(),
         })->toThrow(RuntimeException::class, 'beginning listener failed');
 
         $state = [
@@ -234,21 +272,49 @@ it('restores the original transaction depth when a transaction beginning listene
             'level' => $initialLevel,
             'pdo_in_transaction' => $outerTransaction,
         ]);
+        $files = Storage::disk('local')->allFiles('beginning-failure');
+        sort($files);
+        $expectedFiles = ["beginning-failure/{$first}", "beginning-failure/{$stage->version}"];
+        sort($expectedFiles);
+
         expect(VersionedStorage::versions('beginning-failure'))->toBe([$first])
             ->and(VersionedStorage::get('beginning-failure'))->toBe('original')
-            ->and(Storage::disk('local')->allFiles('beginning-failure'))->toBe(["beginning-failure/{$first}"]);
+            ->and($files)->toBe($expectedFiles);
 
         if ($outerTransaction) {
             expect(VersionedStorage::get('outer-work', $outerVersion))->toBe('uncommitted contents');
             $connection->commit();
             expect(VersionedStorage::get('outer-work', $outerVersion))->toBe('uncommitted contents');
         }
+        $stage->discard();
     } finally {
         if ($connection->transactionLevel() > 0) {
             $connection->rollBack(0);
         }
     }
 })->with([false, true])->with(['read', 'exists', 'write']);
+
+it('rejects uploads inside an active metadata transaction before writing files', function () {
+    DB::beginTransaction();
+    $callbackCalled = false;
+
+    try {
+        expect(fn () => VersionedStorage::put('transaction-guard', 'contents'))
+            ->toThrow(RuntimeException::class, 'Uploads cannot run inside a metadata transaction')
+            ->and(fn () => VersionedStorage::stage('transaction-guard', 'contents'))
+            ->toThrow(RuntimeException::class, 'Uploads cannot run inside a metadata transaction')
+            ->and(fn () => VersionedStorage::directory('transaction-guard', function () use (&$callbackCalled): void {
+                $callbackCalled = true;
+            }))
+            ->toThrow(RuntimeException::class, 'Uploads cannot run inside a metadata transaction');
+        expect(DB::transactionLevel())->toBe(1)
+            ->and($callbackCalled)->toBeFalse()
+            ->and(Storage::disk('local')->allFiles('transaction-guard'))->toBe([])
+            ->and(DB::table('versioned_storage_versions')->count())->toBe(0);
+    } finally {
+        DB::rollBack();
+    }
+});
 
 it('retains failed cleanup records and can retry cleanup without publishing again', function () {
     $first = VersionedStorage::put('retry', 'original');
@@ -279,12 +345,12 @@ it('preserves the committed version when command cleanup fails', function () {
         ->andThrow(UnableToDeleteFile::atLocation("deferred-failure/{$first}"));
     Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
 
+    $stage = VersionedStorage::stage('deferred-failure', 'replacement');
     DB::beginTransaction();
-    $second = VersionedStorage::put('deferred-failure', 'replacement', true);
+    $second = $stage->publish(cleanup: true);
     Storage::disk('local')->assertExists("deferred-failure/{$first}");
     DB::commit();
     Storage::disk('local')->assertExists("deferred-failure/{$first}");
-    app()->terminate();
     $this->artisan('laravel-versioned-storage:cleanup')->assertFailed();
     expect(VersionedStorage::get('deferred-failure'))->toBe('replacement')
         ->and(VersionedStorage::versions('deferred-failure'))->toBe([$second])
@@ -306,66 +372,58 @@ it('writes uploaded and local file contents to the exact version filename', func
         ->and(VersionedStorage::get('local-file'))->toBe('uploaded');
 });
 
-it('removes rolled back directory snapshots without deleting the original snapshot', function () {
+it('retains a rolled back directory stage without deleting the original snapshot', function () {
     $first = VersionedStorage::directory('directory', function (FilesystemAdapter $files): void {
         $files->put('one', 'original');
     });
-    DB::beginTransaction();
-    $second = VersionedStorage::directory('directory', function (FilesystemAdapter $files): void {
+    $stage = VersionedStorage::stageDirectory('directory', function (FilesystemAdapter $files): void {
         $files->put('one', 'replacement');
-    }, true);
+    });
+    DB::beginTransaction();
+    $second = $stage->publish(cleanup: true);
     DB::rollBack();
 
     expect(VersionedStorage::directory('directory')->get('one'))->toBe('original')
-        ->and(VersionedStorage::directory('directory')->versions())->toBe([$first]);
-    Storage::disk('local')->assertMissing("directory/{$second}/one");
+        ->and(VersionedStorage::directory('directory')->versions())->toBe([$first])
+        ->and(DB::table('versioned_storage_stages')->where('version', $second)->value('state'))->toBe('ready');
+    Storage::disk('local')->assertExists("directory/{$second}/one");
+    $stage->discard();
 });
 
-it('can retry a failed snapshot deletion after rollback', function (bool $directory, bool $newResource, string $outer) {
-    $write = static function (string $contents) use ($directory): string {
-        return $directory
-            ? VersionedStorage::directory('rollback-retry', function (FilesystemAdapter $files) use ($contents): void {
-                $files->put('one', $contents);
-            }, cleanup: true)
-            : VersionedStorage::put('rollback-retry', $contents, cleanup: true);
-    };
+it('recovers failed discards of rolled back stages into durable cleanup work', function (bool $directory, bool $newResource, string $outer) {
     $versions = static fn (): array => $directory
         ? VersionedStorage::directory('rollback-retry')->versions()
         : VersionedStorage::versions('rollback-retry');
-    $first = $newResource ? null : $write('original');
+    $first = $newResource ? null : ($directory
+        ? VersionedStorage::directory('rollback-retry', function (FilesystemAdapter $files): void {
+            $files->put('one', 'original');
+        })
+        : VersionedStorage::put('rollback-retry', 'original'));
     $disk = Storage::disk('local');
+    $refuseDeletion = false;
     $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    $method = $directory ? 'deleteDirectory' : 'delete';
+    $adapter->shouldReceive($method)->andReturnUsing(function (string $path) use (&$refuseDeletion, $disk, $method): void {
+        if ($refuseDeletion) {
+            throw new RuntimeException('snapshot deletion refused');
+        }
+
+        $disk->getAdapter()->$method($path);
+    });
     Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
+    $stage = $directory
+        ? VersionedStorage::stageDirectory('rollback-retry', function (FilesystemAdapter $files): void {
+            $files->put('one', 'replacement');
+        })
+        : VersionedStorage::stage('rollback-retry', 'replacement');
 
     if ($outer !== 'none') {
         DB::beginTransaction();
     }
 
     DB::beginTransaction();
-    $second = $write('replacement');
-    $refuseDeletion = true;
-    $method = $directory ? 'deleteDirectory' : 'delete';
-    $adapter->shouldReceive($method)
-        ->with("rollback-retry/{$second}")
-        ->andReturnUsing(function (string $path) use (&$refuseDeletion, $disk, $method): void {
-            if ($refuseDeletion) {
-                throw new RuntimeException('snapshot deletion refused');
-            }
-
-            $disk->getAdapter()->$method($path);
-        });
-
-    try {
-        expect(fn () => DB::rollBack())->toThrow(RuntimeException::class, 'snapshot deletion refused');
-    } finally {
-        $refuseDeletion = false;
-        Storage::set('local', $disk);
-    }
-
-    $expectedVersions = $first === null ? [] : [$first];
-    expect($versions())->toBe($expectedVersions)
-        ->and(DB::table('versioned_storage_versions')->where('version', $second)->value('pending_delete'))->toBe(1);
-    $disk->assertExists("rollback-retry/{$second}");
+    $stage->publish(cleanup: true);
+    DB::rollBack();
 
     if ($outer === 'commit') {
         DB::commit();
@@ -373,14 +431,26 @@ it('can retry a failed snapshot deletion after rollback', function (bool $direct
         DB::rollBack();
     }
 
+    $expectedVersions = $first === null ? [] : [$first];
     expect(DB::transactionLevel())->toBe(0)
-        ->and($versions())->toBe($expectedVersions);
-
+        ->and($versions())->toBe($expectedVersions)
+        ->and(DB::table('versioned_storage_stages')->where('version', $stage->version)->value('state'))->toBe('ready');
+    $disk->assertExists($directory ? "rollback-retry/{$stage->version}/one" : "rollback-retry/{$stage->version}");
+    $refuseDeletion = true;
+    expect(fn () => $stage->discard())->toThrow(RuntimeException::class, 'snapshot deletion refused');
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->value('state'))->toBe('discarding');
+    $this->artisan('laravel-versioned-storage:cleanup')
+        ->expectsOutputToContain('Unable to remove version')
+        ->assertFailed();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeFalse()
+        ->and(DB::table('versioned_storage_versions')->where('version', $stage->version)->value('pending_delete'))->toBe(1);
+    $disk->assertExists($directory ? "rollback-retry/{$stage->version}/one" : "rollback-retry/{$stage->version}");
+    $refuseDeletion = false;
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
-
-    $disk->assertMissing("rollback-retry/{$second}");
-    expect(DB::table('versioned_storage_versions')->where('version', $second)->exists())->toBeFalse()
-        ->and(DB::table('versioned_storage_reservations')->where('version', $second)->exists())->toBeTrue();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeFalse()
+        ->and(DB::table('versioned_storage_versions')->where('version', $stage->version)->exists())->toBeFalse()
+        ->and($versions())->toBe($expectedVersions);
+    $disk->assertMissing($directory ? "rollback-retry/{$stage->version}/one" : "rollback-retry/{$stage->version}");
 
     if ($first !== null) {
         expect($directory
@@ -390,39 +460,25 @@ it('can retry a failed snapshot deletion after rollback', function (bool $direct
     }
 })->with([false, true])->with([false, true])->with(['none', 'commit', 'rollback']);
 
-it('retains all failed rollback deletions when the filesystem remains unavailable', function () {
+it('retains completed stages from multiple rolled back publications until explicit discard', function () {
     $disk = Storage::disk('local');
-    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
-    $refuseDeletion = true;
-    $adapter->shouldReceive('delete')->andReturnUsing(function (string $path) use (&$refuseDeletion, $disk): void {
-        if ($refuseDeletion) {
-            throw new RuntimeException('snapshot deletion refused');
-        }
-
-        $disk->getAdapter()->delete($path);
-    });
-    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => false]));
-
+    $first = VersionedStorage::stage('rollback-one', 'one');
+    $second = VersionedStorage::stage('rollback-two', 'two');
     DB::beginTransaction();
     DB::beginTransaction();
-    $first = VersionedStorage::put('rollback-one', 'one');
-    $second = VersionedStorage::put('rollback-two', 'two');
-    expect(fn () => DB::rollBack())->toThrow(RuntimeException::class, 'snapshot deletion refused');
+    $first->publish();
+    $second->publish();
+    DB::rollBack();
     DB::commit();
-    app()->terminate();
 
     expect(DB::transactionLevel())->toBe(0)
         ->and(VersionedStorage::versions('rollback-one'))->toBe([])
         ->and(VersionedStorage::versions('rollback-two'))->toBe([])
-        ->and(DB::table('versioned_storage_versions')->where('pending_delete', true)->count())->toBe(2);
-    $this->artisan('laravel-versioned-storage:cleanup')->assertFailed();
-    $disk->assertExists(["rollback-one/{$first}", "rollback-two/{$second}"]);
-
-    $refuseDeletion = false;
-    Storage::set('local', $disk);
-    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
-    $disk->assertMissing(["rollback-one/{$first}", "rollback-two/{$second}"]);
-    expect(DB::table('versioned_storage_versions')->count())->toBe(0);
+        ->and(DB::table('versioned_storage_stages')->whereIn('version', [$first->version, $second->version])->where('state', 'ready')->count())->toBe(2);
+    $disk->assertExists(["rollback-one/{$first->version}", "rollback-two/{$second->version}"]);
+    $first->discard();
+    $second->discard();
+    $disk->assertMissing(["rollback-one/{$first->version}", "rollback-two/{$second->version}"]);
 });
 
 it('retries durable cleanup work left by an interrupted process', function () {

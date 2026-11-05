@@ -41,7 +41,7 @@ jobs:
         uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, bcmath, intl
+          extensions: dom, curl, libxml, mbstring, zip, fileinfo, sqlite, pdo_sqlite, bcmath, intl, sockets${{ runner.os != 'Windows' && ', pcntl, posix' || '' }}
           ini-values: error_reporting=E_ALL
           tools: composer:v2
           coverage: none

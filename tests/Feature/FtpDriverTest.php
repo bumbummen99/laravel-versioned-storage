@@ -54,14 +54,16 @@ it('routes FTP snapshot operations through the selected adapter and prefix', fun
         Mockery::on(fn (string $path): bool => rtrim($path, '/') === $snapshot->path),
     );
 
+    $stage = $directory
+        ? VersionedStorage::stageDirectory('reports', function (FilesystemAdapter $files): void {
+            $files->put('nested/summary.txt', 'contents');
+        }, disk: 'ftp')
+        : VersionedStorage::stage('reports', 'contents', disk: 'ftp');
+
     DB::beginTransaction();
 
     try {
-        $version = $directory
-            ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-                $files->put('nested/summary.txt', 'contents');
-            }, disk: 'ftp')
-            : VersionedStorage::put('reports', 'contents', disk: 'ftp');
+        $version = $stage->publish();
 
         expect($snapshot->path)->toBe("tenant/reports/{$version}")
             ->and($directory
@@ -74,6 +76,7 @@ it('routes FTP snapshot operations through the selected adapter and prefix', fun
     expect($directory
         ? VersionedStorage::directory('reports', disk: 'ftp')->versions()
         : VersionedStorage::versions('reports', 'ftp'))->toBe([]);
+    $stage->discard();
 })->with([false, true]);
 
 it('propagates real FTP adapter connection failures without publishing a version', function () {

@@ -6,8 +6,10 @@ namespace SkyRaptor\LaravelVersionedStorage\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Database\Query\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
+use PDO;
 use RuntimeException;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageHandler;
 use Throwable;
@@ -16,7 +18,7 @@ class CleanupVersionsCommand extends Command
 {
     protected $signature = 'laravel-versioned-storage:cleanup {--chunk=10 : Maximum concurrent snapshot deletions per batch}';
 
-    protected $description = 'Retry pending version deletions without publishing new versions.';
+    protected $description = 'Recover interrupted uploads and retry pending version deletions.';
 
     public function handle(): int
     {
@@ -29,13 +31,31 @@ class CleanupVersionsCommand extends Command
             return self::FAILURE;
         }
 
-        if ($connection->transactionLevel() > 0 || $connection->getPdo()->inTransaction()) {
+        $pdo = $connection->getRawPdo();
+
+        if ($connection->transactionLevel() > 0 || ($pdo instanceof PDO && $pdo->inTransaction())) {
             $this->error('Version cleanup cannot run inside an active metadata transaction.');
 
             return self::FAILURE;
         }
 
         // Committed retirement is irreversible; publication has already drained protected readers.
+        $failed = false;
+        $staging = $connection->table('versioned_storage_resources')->useWritePdo()
+            ->whereIn('id', $connection->table('versioned_storage_stages')->select('resource_id')
+                ->whereIn('state', ['uploading', 'discarding'])->where('cleanup_after', '<=', now()))
+            ->where('id', '<=', $connection->table('versioned_storage_resources')->useWritePdo()->max('id') ?? 0);
+        $staging->chunkById($size, function (Collection $resources) use (&$failed): void {
+            foreach ($resources as $resource) {
+                try {
+                    (new VersionedStorageHandler($resource->path, $resource->disk, (bool) $resource->is_directory))
+                        ->recoverStages();
+                } catch (Throwable $exception) {
+                    $this->failure($exception);
+                    $failed = true;
+                }
+            }
+        });
         $pending = $connection->table('versioned_storage_versions as versions')
             ->useWritePdo()->join('versioned_storage_resources as resources', 'resources.id', '=', 'versions.resource_id')
             ->where('versions.pending_delete', true)
@@ -43,7 +63,6 @@ class CleanupVersionsCommand extends Command
                 ->orWhereColumn('versions.version', '!=', 'resources.current_version'));
         // Bound this run so concurrent publications cannot extend it indefinitely.
         $lastId = (int) (clone $pending)->max('versions.id');
-        $failed = false;
         $after = 0;
 
         do {

@@ -119,7 +119,7 @@ it('isolates S3 snapshot reads and cleanup by bucket prefix or resource path', f
         ->toBe('other');
 })->with([false, true])->with(['bucket', 'prefix', 'path']);
 
-it('rolls back S3 snapshots without removing the previous version', function (bool $directory) {
+it('restores the previous S3 version on rollback and explicitly discards the stage', function (bool $directory) {
     ($this->s3Disk)('s3', 'reports-bucket', 'tenant');
     $write = fn (string $contents): string => $directory
         ? VersionedStorage::directory('reports', function (FilesystemAdapter $files) use ($contents): void {
@@ -127,22 +127,26 @@ it('rolls back S3 snapshots without removing the previous version', function (bo
         }, true, 's3')
         : VersionedStorage::put('reports', $contents, true, 's3');
     $first = $write('original');
+    $stage = $directory
+        ? VersionedStorage::stageDirectory('reports', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'staged');
+        }, disk: 's3')
+        : VersionedStorage::stage('reports', 'staged', disk: 's3');
     DB::beginTransaction();
+    $staged = $stage->publish(cleanup: true);
+    DB::rollBack();
 
-    try {
-        $staged = $write('staged');
-    } finally {
-        DB::rollBack();
-    }
-
-    $expected = $directory ? [
-        "tenant/reports/{$first}/" => '',
-        "tenant/reports/{$first}/summary.txt" => 'original',
-    ] : ["tenant/reports/{$first}" => 'original'];
+    $stage->discard();
+    $expected = $directory
+        ? ["tenant/reports/{$first}/" => '', "tenant/reports/{$first}/summary.txt" => 'original']
+        : ["tenant/reports/{$first}" => 'original'];
 
     expect($this->objects['reports-bucket'])->toBe($expected)
         ->and($directory ? VersionedStorage::directory('reports', disk: 's3')->versions() : VersionedStorage::versions('reports', 's3'))
-        ->toBe([$first])->not->toContain($staged);
+        ->toBe([$first])->not->toContain($staged)
+        ->and($directory
+            ? VersionedStorage::directory('reports', disk: 's3')->get('summary.txt')
+            : VersionedStorage::get('reports', disk: 's3'))->toBe('original');
 })->with([false, true]);
 
 it('propagates S3 upload errors without publishing a version', function () {

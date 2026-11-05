@@ -50,17 +50,17 @@ it('keeps scoped paths and public URLs consistent with the physical snapshot', f
     Storage::disk('tenant')->assertExists($relative);
 });
 
-it('removes rolled back snapshots within the disk prefix', function () {
+it('keeps rolled back stages within the disk prefix until explicitly discarded', function () {
     $first = VersionedStorage::put('reports', 'original', disk: 'tenant');
+    $stage = VersionedStorage::stage('reports', 'staged', disk: 'tenant');
     $connection = DB::connection();
     $connection->beginTransaction();
 
-    try {
-        $second = VersionedStorage::put('reports', 'staged', true, 'tenant');
-        Storage::disk('tenant')->assertExists("reports/{$second}");
-    } finally {
-        $connection->rollBack();
-    }
+    $second = $stage->publish(cleanup: true);
+    Storage::disk('tenant')->assertExists("reports/{$second}");
+    $connection->rollBack();
+    Storage::disk('tenant')->assertExists("reports/{$second}");
+    $stage->discard();
 
     expect(VersionedStorage::get('reports', disk: 'tenant'))->toBe('original')
         ->and(Storage::disk('local')->allFiles())->toBe(["tenants/acme/reports/{$first}"]);

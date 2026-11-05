@@ -129,20 +129,18 @@ it('retains SFTP retry records if post-delete verification loses its connection'
         ->and(VersionedStorage::get('reports', disk: 'sftp-first'))->toBe('replacement');
 });
 
-it('removes rolled back SFTP snapshots from the selected root', function (bool $directory) {
+it('discards rolled back SFTP stages from the selected root', function (bool $directory) {
+    $stage = $directory
+        ? VersionedStorage::stageDirectory('reports', function (FilesystemAdapter $files): void {
+            $files->put('summary.txt', 'staged');
+        }, disk: 'sftp-first')
+        : VersionedStorage::stage('reports', 'staged', disk: 'sftp-first');
     DB::beginTransaction();
-
-    try {
-        $version = $directory
-            ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-                $files->put('summary.txt', 'staged');
-            }, disk: 'sftp-first')
-            : VersionedStorage::put('reports', 'staged', disk: 'sftp-first');
-        expect($this->remoteFiles)->toHaveCount(1);
-    } finally {
-        DB::rollBack();
-    }
-
+    $version = $stage->publish();
+    expect($this->remoteFiles)->toHaveCount(1);
+    DB::rollBack();
+    expect($this->remoteFiles)->toHaveCount(1);
+    $stage->discard();
     expect($this->remoteFiles)->toBe([])
         ->and($this->deletions)->toContain("/remote/first/tenant/reports/{$version}".($directory ? '/' : ''))
         ->and($directory

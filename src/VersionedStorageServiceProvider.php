@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace SkyRaptor\LaravelVersionedStorage;
 
-use Illuminate\Database\Events\TransactionBeginning;
-use Illuminate\Database\Events\TransactionCommitted;
-use Illuminate\Database\Events\TransactionRolledBack;
+use Illuminate\Console\Events\CommandFinished;
+use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Queue\Events\JobExceptionOccurred;
+use Illuminate\Queue\Events\JobProcessed;
+use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use SkyRaptor\LaravelVersionedStorage\Console\Commands\CleanupVersionsCommand;
@@ -22,7 +24,7 @@ class VersionedStorageServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__.'/../config/laravel-versioned-storage.php', 'laravel-versioned-storage');
 
         $this->app->singleton(VersionedStorage::class);
-        $this->app->singleton(VersionedStorageTransactions::class);
+        $this->app->singleton(UploadContext::class);
     }
 
     /**
@@ -30,10 +32,11 @@ class VersionedStorageServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        Event::listen(TransactionBeginning::class, [VersionedStorageTransactions::class, 'beginning']);
-        Event::listen(TransactionCommitted::class, [VersionedStorageTransactions::class, 'committed']);
-        Event::listen(TransactionRolledBack::class, [VersionedStorageTransactions::class, 'rolledBack']);
-
+        Event::listen(CommandStarting::class, [UploadContext::class, 'commandStarting']);
+        Event::listen(CommandFinished::class, [UploadContext::class, 'commandFinished']);
+        Event::listen(JobProcessing::class, [UploadContext::class, 'jobProcessing']);
+        Event::listen(JobProcessed::class, [UploadContext::class, 'jobFinished']);
+        Event::listen(JobExceptionOccurred::class, [UploadContext::class, 'jobFinished']);
         $this->loadRoutesFrom(__DIR__.'/../routes/laravel-versioned-storage.php');
 
         $this->loadViewsFrom(__DIR__.'/../resources/views', 'laravel-versioned-storage');

@@ -19,7 +19,7 @@ RUN echo "Acquire::http::Pipeline-Depth 0;" > /etc/apt/apt.conf.d/99custom && \
 
 RUN apt-get update && apt-get upgrade -y \
     && mkdir -p /etc/apt/keyrings \
-    && apt-get install -y gnupg gosu curl ca-certificates zip unzip git sqlite3 libcap2-bin dnsutils fswatch nano \
+    && apt-get install -y gnupg gosu curl ca-certificates zip unzip git sqlite3 libcap2-bin dnsutils fswatch nano nginx \
     && curl -sSLo /tmp/debsuryorg-archive-keyring.deb https://packages.sury.org/debsuryorg-archive-keyring.deb \
     && dpkg -i /tmp/debsuryorg-archive-keyring.deb \
     && echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ noble main" > /etc/apt/sources.list.d/php.list \
@@ -27,6 +27,7 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y \
     libgd3 \
     php8.4-cli \
+    php8.4-fpm \
     php8.4-dev \
     php8.4-pgsql \
     php8.4-sqlite3 \
