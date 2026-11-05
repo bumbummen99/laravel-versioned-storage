@@ -6,6 +6,7 @@ namespace SkyRaptor\LaravelVersionedStorage\Tests\Support;
 
 use Illuminate\Filesystem\Filesystem;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
@@ -13,6 +14,8 @@ use Symfony\Component\Process\Process;
 
 class FpmServer
 {
+    private const int STARTUP_ATTEMPTS = 3;
+
     public readonly string $directory;
 
     private ?Process $fpm = null;
@@ -24,7 +27,10 @@ class FpmServer
     public function __construct()
     {
         $this->directory = sys_get_temp_dir().'/versioned-fpm-'.bin2hex(random_bytes(8));
-        mkdir($this->directory, 0700);
+
+        if (! mkdir($this->directory, 0700)) {
+            throw new RuntimeException('Unable to create FPM fixture directory.');
+        }
     }
 
     /** @param array<string, string> $environment */
@@ -32,22 +38,14 @@ class FpmServer
     {
         $directory = $this->directory;
         $script = __DIR__.'/upload-timeout/http.php';
-        $socket = stream_socket_server('tcp://127.0.0.1:0');
-
-        if ($socket === false) {
-            throw new RuntimeException('Unable to reserve a test HTTP port.');
-        }
-        $this->address = (string) stream_socket_get_name($socket, false);
-        fclose($socket);
-
-        file_put_contents($directory.'/php.ini', <<<INI
+        $this->writeConfiguration('php.ini', <<<INI
             max_execution_time = {$execution}
             memory_limit = 256M
             display_errors = Off
             log_errors = On
             error_log = "{$directory}/php.log"
             INI);
-        file_put_contents($directory.'/fpm.conf', <<<CONF
+        $this->writeConfiguration('fpm.conf', <<<CONF
             [global]
             pid = {$directory}/fpm.pid
             error_log = {$directory}/fpm.log
@@ -61,7 +59,14 @@ class FpmServer
             request_terminate_timeout = {$termination}s
             request_terminate_timeout_track_finished = yes
             CONF);
-        file_put_contents($directory.'/nginx.conf', <<<CONF
+        $this->fpm = new Process([$fpm, '-F', '-y', $directory.'/fpm.conf', '-c', $directory.'/php.ini'], null, $environment);
+        $this->fpm->setTimeout(null);
+        $this->fpm->start();
+        $this->waitFor(fn (): bool => file_exists($directory.'/fpm.sock'));
+
+        for ($attempt = 1; $attempt <= self::STARTUP_ATTEMPTS; $attempt++) {
+            $this->address = $this->availableAddress();
+            $this->writeConfiguration('nginx.conf', <<<CONF
             pid {$directory}/nginx.pid;
             error_log {$directory}/nginx.log info;
             events { worker_connections 32; }
@@ -86,18 +91,66 @@ class FpmServer
             }
             CONF);
 
-        $this->fpm = new Process([$fpm, '-F', '-y', $directory.'/fpm.conf', '-c', $directory.'/php.ini'], null, $environment);
-        $this->fpm->setTimeout(null);
-        $this->fpm->start();
-        $this->waitFor(fn (): bool => file_exists($directory.'/fpm.sock'));
-        $this->nginx = new Process([$nginx, '-p', $directory, '-c', $directory.'/nginx.conf', '-g', 'daemon off;']);
-        $this->nginx->setTimeout(null);
-        $this->nginx->start();
+            $this->nginx = new Process([$nginx, '-p', $directory, '-c', $directory.'/nginx.conf', '-g', 'daemon off;']);
+            $this->nginx->setTimeout(null);
+            $this->nginx->start();
+
+            try {
+                $this->waitFor(function (): bool {
+                    // Nginx can briefly retry a failed bind while another server owns the port.
+                    if (str_contains($this->nginx->getErrorOutput(), 'Address already in use')) {
+                        throw new RuntimeException('Nginx test port collision.');
+                    }
+
+                    try {
+                        Http::timeout(1)->get('http://'.$this->address.'/health')->throw();
+
+                        return true;
+                    } catch (ConnectionException) {
+                        return false;
+                    }
+                });
+
+                return;
+            } catch (RuntimeException|RequestException $exception) {
+                $collision = str_contains($this->nginx->getErrorOutput(), 'Address already in use');
+                $diagnostics = $this->logs();
+                $this->nginx->stop(1);
+
+                if ($collision && $attempt < self::STARTUP_ATTEMPTS) {
+                    continue;
+                }
+
+                throw new RuntimeException('Unable to start the FPM test server: '.$diagnostics, previous: $exception);
+            }
+        }
+    }
+
+    private function writeConfiguration(string $name, string $contents): void
+    {
+        if (file_put_contents($this->directory.'/'.$name, $contents) !== strlen($contents)) {
+            throw new RuntimeException("Unable to write FPM fixture configuration [{$name}].");
+        }
+    }
+
+    protected function availableAddress(): string
+    {
+        $socket = stream_socket_server('tcp://127.0.0.1:0');
+
+        if ($socket === false) {
+            throw new RuntimeException('Unable to reserve a test HTTP port.');
+        }
 
         try {
-            Http::retry(30, 100)->timeout(2)->get('http://'.$this->address.'/health')->throw();
-        } catch (ConnectionException $exception) {
-            throw new RuntimeException('Unable to reach the FPM test server: '.$this->logs(), previous: $exception);
+            $address = stream_socket_get_name($socket, false);
+
+            if ($address === false) {
+                throw new RuntimeException('Unable to determine the test HTTP address.');
+            }
+
+            return $address;
+        } finally {
+            fclose($socket);
         }
     }
 
@@ -130,8 +183,10 @@ class FpmServer
 
     public function stop(): void
     {
-        $this->nginx?->stop(1);
-        $this->fpm?->stop(1);
-        (new Filesystem)->deleteDirectory($this->directory);
+        ProcessCleanup::run(array_values(array_filter([$this->nginx, $this->fpm])), function (): void {
+            if (is_dir($this->directory) && ! (new Filesystem)->deleteDirectory($this->directory)) {
+                throw new RuntimeException("Unable to remove FPM fixture directory [{$this->directory}].");
+            }
+        });
     }
 }

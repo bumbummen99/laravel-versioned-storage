@@ -70,14 +70,20 @@ final class SubprocessFixture
     public function close(): void
     {
         try {
-            foreach ($this->processes as $process) {
-                $process->stop();
-            }
+            ProcessCleanup::run($this->processes, function (): void {
+                DB::purge($this->connection);
+
+                if (is_dir($this->directory) && ! (new Filesystem)->deleteDirectory($this->directory)) {
+                    throw new RuntimeException("Unable to remove fixture directory [{$this->directory}].");
+                }
+            });
         } finally {
-            DB::purge($this->connection);
-            config()->set("database.connections.{$this->connection}", $this->previousConfiguration);
-            config()->set('laravel-versioned-storage.connection', $this->previousConnection);
-            (new Filesystem)->deleteDirectory($this->directory);
+            try {
+                DB::purge($this->connection);
+            } finally {
+                config()->set("database.connections.{$this->connection}", $this->previousConfiguration);
+                config()->set('laravel-versioned-storage.connection', $this->previousConnection);
+            }
         }
     }
 }
