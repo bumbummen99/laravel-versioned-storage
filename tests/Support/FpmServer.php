@@ -52,6 +52,7 @@ class FpmServer
             pid = {$directory}/fpm.pid
             error_log = {$directory}/fpm.log
             [www]
+            chdir = {$directory}
             listen = {$directory}/fpm.sock
             pm = static
             pm.max_children = 1
