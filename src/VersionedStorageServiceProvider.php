@@ -24,6 +24,7 @@ class VersionedStorageServiceProvider extends ServiceProvider
 
         $this->app->singleton(VersionedStorage::class);
         $this->app->singleton(UploadContext::class);
+        $this->app->bind(UploadExecutionPolicy::class, UploadContext::class);
     }
 
     /**

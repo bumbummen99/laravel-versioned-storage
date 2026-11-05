@@ -6,6 +6,7 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\PathTraversalDetected;
+use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 beforeEach(function (): void {
@@ -33,6 +34,20 @@ it('writes versions inside the selected disks configured prefix', function (bool
     Storage::disk('local')->assertMissing($relative);
 })->with([false, true]);
 
+it('preserves scoped disk configuration across individual filesystem children', function () {
+    VersionedStorageTesting::restoreUploadExecution();
+    $version = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        $files->put('one', 'contents');
+        $files->copy('one', 'two');
+        $files->move('two', 'three');
+        expect($files->allFiles())->toBe(['one', 'three'])
+            ->and($files->get('three'))->toBe('contents');
+    }, disk: 'tenant');
+
+    Storage::disk('local')->assertExists("tenants/acme/reports/{$version}/three");
+    Storage::disk('local')->assertMissing("reports/{$version}/three");
+});
+
 it('keeps scoped paths and public URLs consistent with the physical snapshot', function () {
     $url = null;
     $path = null;
@@ -41,13 +56,21 @@ it('keeps scoped paths and public URLs consistent with the physical snapshot', f
         $url = $files->url('summary.txt');
         $path = $files->path('summary.txt');
         expect($files->allFiles())->toBe(['summary.txt']);
-        expect(fn () => $files->put('../escaped.txt', 'invalid'))->toThrow(PathTraversalDetected::class);
     }, disk: 'tenant');
     $relative = "reports/{$version}/summary.txt";
 
     expect($path)->toBe(Storage::disk('tenant')->path($relative))
         ->and($url)->toBe(Storage::disk('tenant')->url($relative));
     Storage::disk('tenant')->assertExists($relative);
+});
+
+it('rejects traversal and refuses publication even if the callback catches the error', function () {
+    expect(fn () => VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
+        expect(fn () => $files->put('../escaped.txt', 'invalid'))->toThrow(PathTraversalDetected::class);
+    }, disk: 'tenant'))->toThrow(RuntimeException::class, 'snapshot failed');
+
+    expect(VersionedStorage::directory('reports', disk: 'tenant')->versions())->toBe([]);
+    Storage::disk('local')->assertMissing('tenants/acme/reports/escaped.txt');
 });
 
 it('keeps rolled back stages within the disk prefix until explicitly discarded', function () {

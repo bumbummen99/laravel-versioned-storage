@@ -3,10 +3,14 @@
 namespace Workbench\App\Providers;
 
 use Carbon\Carbon;
+use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\ServiceProvider;
+use League\Flysystem\Filesystem;
 use RuntimeException;
+use Workbench\App\TimeoutFilesystemAdapter;
 
 class WorkbenchServiceProvider extends ServiceProvider
 {
@@ -31,7 +35,7 @@ class WorkbenchServiceProvider extends ServiceProvider
                 'driver' => 'sqlite', 'database' => getenv('VERSIONED_STORAGE_TEST_DB'), 'foreign_key_constraints' => true,
             ],
             'filesystems.default' => 'local',
-            'filesystems.disks.local' => ['driver' => 'local', 'root' => $root],
+            'filesystems.disks.local' => ['driver' => 'timeout-test', 'root' => $root],
             'queue.default' => 'database',
             'queue.failed.driver' => null,
             'queue.connections.database' => [
@@ -54,6 +58,14 @@ class WorkbenchServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if (getenv('VERSIONED_STORAGE_TEST_DB') !== false) {
+            Storage::extend('timeout-test', static function ($app, array $config): FilesystemAdapter {
+                $adapter = new TimeoutFilesystemAdapter($config['root']);
+
+                return new FilesystemAdapter(new Filesystem($adapter), $adapter, $config);
+            });
+        }
+
         if (getenv('VERSIONED_STORAGE_TEST_DB') !== false && $this->app->runningInConsole()) {
             Event::listen(JobExceptionOccurred::class, static function (JobExceptionOccurred $event): void {
                 fwrite(STDERR, (string) $event->exception);

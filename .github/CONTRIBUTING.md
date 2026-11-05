@@ -62,6 +62,8 @@ composer test:unit
 
 ### Real PHP-FPM timeout tests
 
+Ordinary feature/specification tests explicitly use `VersionedStorageTesting::runUploadsSynchronously()` with real metadata and fake disks. Execution-policy tests restore the production policy. Per-operation tests verify committed mutation journals, parent-owned callbacks/database work, independent child timeouts, and recovery after failed acknowledgements. Real execution tests must not enable synchronous execution in their server/worker processes.
+
 Upload execution tests use the Workbench application: CLI scenarios and real queue workers run through `vendor/bin/testbench`, while the development server and FPM share a minimal HTTP bootstrap into that same application. Test-only commands, routes, and configuration are enabled by `VERSIONED_STORAGE_TEST_DB` and require `VERSIONED_STORAGE_TEST_ROOT`; the tests supply isolated temporary resources. Normal Workbench sessions do not expose these scenarios, and the tests do not invoke `workbench:build` or its database reset steps.
 
 Install PHP-FPM matching your CLI PHP version and Nginx (included in the devcontainer), then run:
@@ -72,7 +74,7 @@ vendor/bin/pest --group=fpm
 
 These tests start isolated, unprivileged FPM and Nginx processes with temporary configuration, a file-backed SQLite database, and a local test disk. They do not modify system server configuration or use existing server instances. They are also included in the normal suite, but skip when either binary is unavailable or on Windows.
 
-The scenarios exercise `max_execution_time` from a temporary `php.ini`, `request_terminate_timeout` from an FPM pool, and Nginx's `fastcgi_read_timeout`. They verify successful uploads, PHP termination of CPU-bound work, FPM termination during blocked work, and that an Nginx 504 does not terminate an upload. Incomplete journals and partial files survive until the persisted cleanup deadline, then cleanup removes both; successful uploads remain readable. The Nginx-only scenario deliberately disables FPM termination to demonstrate that PHP and Nginx limits alone do not provide the required blocked-I/O bound.
+The scenarios exercise `max_execution_time` from a temporary `php.ini`, `request_terminate_timeout` from an FPM pool, and Nginx's `fastcgi_read_timeout`. A Workbench-only filesystem adapter simulates CPU-bound or blocked work inside the actual write, not the directory callback. The tests verify successful uploads, PHP termination of CPU-bound work, FPM termination during blocked work, and that an Nginx 504 does not terminate an upload. Incomplete journals and partial files survive until the persisted cleanup deadline, then cleanup removes both; successful uploads remain readable. The Nginx-only scenario deliberately disables FPM termination to demonstrate that PHP and Nginx limits alone do not provide the required blocked-I/O bound.
 
 ## Benchmarks
 

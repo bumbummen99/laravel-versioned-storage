@@ -13,7 +13,7 @@ use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Jobs\SyncJob;
 use RuntimeException;
 
-class UploadContext
+class UploadContext implements UploadExecutionPolicy
 {
     /** @var list<array{command: string, timeout: int, once: bool}> */
     private array $workers = [];

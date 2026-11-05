@@ -118,7 +118,7 @@ Metadata for a retired disk with no configured driver or registered instance doe
 
 Pass `cleanup: true` to `put()` or `directory()` to retire all previously published versions of that resource. They become unavailable through the package API immediately within the transaction; physical deletion is left to the cleanup command. Other resources and unregistered files are left untouched.
 
-Writes complete before the current-version pointer is changed in a database transaction. Concurrent publications of the same resource are serialized through a persistent database row. Each upload holds a separate staging-row lock and an internal database transaction through its filesystem work. Failed writes or callbacks are not published, and immediate removal of their staged data is attempted. Missing versions return `false` from `exists()` and raise an exception from `get()`. Filesystem and database failures also raise exceptions.
+Writes complete before the current-version pointer is changed in a database transaction. Concurrent publications of the same resource are serialized through a persistent database row. Short metadata transactions track the stage and each filesystem mutation without holding a transaction through upload I/O. Failed operations or callbacks cannot publish a partial snapshot; uncertain mutations retain journals and defer deletion until safe recovery. Missing versions return `false` from `exists()` and raise an exception from `get()`. Filesystem and database failures also raise exceptions.
 
 Resource roots are reserved before staging files. First registrations are serialized using a shared database lock so concurrent writers cannot bypass the overlap guards. This does not detect every physical overlap or make invalid disk configurations safe. A failed write can leave an empty resource reservation with no current version; it is not a published snapshot.
 
@@ -191,13 +191,17 @@ DB::transaction(function () use ($staged): void {
 
 For directories, use `VersionedStorage::stageDirectory($path, $callback)` with the same scoped filesystem callback as `directory()`. Both staging APIs return a `StagedVersion` with a public `version` UUID, `publish(bool $cleanup = false): string`, and `discard(): void`. Ordinary `put()` and directory writes still upload and publish in one call when no metadata transaction is open.
 
-Staging commits a durable upload intent before writing, using the existing metadata connection, then locks that intent during the entire upload. The intent's state becomes ready only when the upload finishes with its metadata transaction intact. A killed writer releases its database lock; the incomplete intent survives. Cleanup can reclaim it only after its persisted `cleanup_after` deadline and after acquiring its lock. Writers recheck the intent after locking it, so cleanup winning the lock before upload starts causes an explicit failure before filesystem writes. No response-termination hook or second metadata connection is required.
+Staging commits a durable snapshot stage before writing. Each filesystem mutation then commits its own short-lived operation journal before accessing storage: write/write stream, directory creation (including the initial snapshot directory), copy, move, deletion, and visibility changes. After confirmed success, the parent deletes that operation's journal before the next operation starts. Sequential callbacks therefore normally have at most one outstanding mutation journal. Reads, listings, and metadata queries do not create mutation journals.
 
-Explicitly staged, completed snapshots have **no automatic expiry**. They remain hidden from reads/lists until publication. Publication locks the stage and resource and commits the version, current pointer, retirement flags, and published-stage state together. Outer or nested rollback restores the completed stage without deleting its files; publish it again or call `$staged->discard()` after the transaction ends. Failed `put()`/directory writes still attempt immediate removal; failed removals remain discoverable for command retries without relying on process memory.
+The directory callback and all package database work stay in the calling process. Only filesystem operations run in supervised children where the execution policy requires them. Database transactions are short and do not span storage I/O. Each operation checks and locks the stage before starting and when acknowledging completion; cleanup claims the stage under the same lock, preventing subsequent operations from writing into a reclaimed snapshot. No response-termination hook or second metadata connection is required.
+
+A stage becomes ready only after the callback returns successfully and all operations have succeeded. Any filesystem operation failure poisons the entire snapshot, even if the callback catches the exception: subsequent operations fail and the stage cannot be published. Files from earlier successful operations are not partial published versions. The existing current version remains unchanged.
+
+Explicitly staged, completed snapshots have **no automatic expiry**. They remain hidden from reads/lists until publication. Publication locks the stage and resource and commits the version, current pointer, retirement flags, and published-stage state together. Outer or nested rollback restores the completed stage without deleting its files; publish it again or call `$staged->discard()` after the transaction ends. Failed callbacks with no outstanding operation may attempt immediate removal; uncertain mutations retain their journal and defer snapshot deletion until safe recovery. Failed removals remain discoverable for command retries without relying on process memory.
 
 For queue jobs and other processes, pass the UUID and reload with `VersionedStorage::staged($uuid)`. Configure the same metadata database and named disk. Do not serialize a live stage/handler or transaction. Retrying publication of an already-published stage returns its UUID without changing the current version or applying cleanup again, even if a later version has retired it. Published-stage records and UUID reservations are retained for this idempotency guarantee. Discarding a published stage is rejected; discarding an unpublished stage prevents later publication and retains retry work if filesystem removal fails.
 
-Transactions and locks remain open during staging filesystem I/O. MySQL/InnoDB and PostgreSQL use row locks; recovery skips staging rows locked by active writers (`SKIP LOCKED`, requiring support in the database server, such as MySQL 8+). SQLite serializes writers with database-wide write locks; cleanup may wait or report lock contention, but must not delete an active upload. Keep application publication transactions short.
+MySQL/InnoDB and PostgreSQL use row locks for journal transitions; recovery skips staging rows locked by metadata work (`SKIP LOCKED`, requiring support in the database server, such as MySQL 8+). SQLite serializes metadata writes with database-wide write locks. Outstanding operation deadlines protect storage work between these transactions. Keep application publication transactions short.
 
 Recovery requires the metadata database and target disk to be available. The timeout and storage-completion assumptions below are part of its operating contract, not a universal remote-storage fencing guarantee. Completed stages deliberately abandoned by callers, or completed just before a caller crashes without retaining their UUID, still require explicit discard; ready does not mean abandoned.
 
@@ -216,21 +220,25 @@ Execution is selected by PHP SAPI and active queue context, not `APP_ENV`:
 | --- | --- |
 | PHP-FPM (`fpm-fcgi`) | `upload_timeout`, enforced externally by PHP-FPM. |
 | Active daemon queue job (`queue:work` / `horizon:work`) | Job `$timeout`, otherwise the current worker's `--timeout` (Laravel default: 60). Uses the existing worker, without forking. |
-| CLI, including commands outside jobs | Forked upload with `upload_timeout`. |
-| `php artisan serve` (`cli-server`) | The same supervised fork mode as CLI. |
-| `queue:work --once` | Forked upload using the job/worker timeout; Laravel does not arm its daemon alarm in this mode. |
+| CLI, including commands outside jobs | A supervised child per filesystem operation, each with a fresh `upload_timeout`. |
+| `php artisan serve` (`cli-server`) | The same per-operation supervised fork mode as CLI. |
+| `queue:work --once` | A supervised child per operation using the job/worker timeout; Laravel does not arm its daemon alarm in this mode. |
 
 For FPM, set `upload_timeout` to the actual hard request execution limit. With Forge, align it with the configured maximum execution time and verify all three settings: PHP `max_execution_time`, FPM `request_terminate_timeout`, and Nginx `fastcgi_read_timeout`. **Only FPM's termination limit guarantees worker termination during blocked I/O; PHP's limit and Nginx's response timeout alone do not.** The package does not infer a hard deadline from `ini_get('max_execution_time')`, nor change server configuration. Configure FPM so requests cannot continue indefinitely after the response finishes.
 
 Queue workers must have working PCNTL/POSIX timeout enforcement, working failure handlers, and normal Laravel process supervision. Keep `retry_after` (or the queue provider's visibility timeout) longer than the worker/job timeout. Zero/unbounded limits, unknown job-worker contexts, and unsupported web SAPIs fail explicitly rather than creating unsafe uploads. Synchronous jobs inherit the enclosing real job's limit, or the ordinary runtime policy outside a worker.
 
-Fork mode requires Unix, PCNTL, POSIX, sockets, and a persistent metadata database. Windows and in-memory SQLite cannot run forked uploads. All resolved database connections must be outside transactions. Connections are disconnected before forking; the child reconnects and resolves the named filesystem disk afresh. Configure custom drivers and disks through the application; do not capture live PDO, remote client connections, or other non-fork-safe handles in upload callbacks. Callback mutations of parent-process memory are not visible in fork mode. The fork timeout covers the upload callback and automatic publication, not every surrounding package operation.
+Fork mode requires Unix, PCNTL, POSIX, and sockets; native Windows is unsupported. In-memory SQLite metadata is supported because children perform no package database work. All resolved database connections must be outside transactions before starting a forked upload. The parent retains its connections; each child reconstructs the disk from its saved configuration. Configure custom drivers through the application and provide reproducible disk configuration. Do not use database connections or inherited remote clients inside custom filesystem drivers.
+
+The callback runs in the parent, so its assertions and captured-variable changes are visible there. Each filesystem call gets an independent timeout: two successful writes may together take longer than `upload_timeout`. Reads, existence checks, metadata, and complete listing enumeration inside the callback are also supervised. Forked `readStream()` fully copies the remote stream into a temporary local stream before returning it, bounding remote reading at the cost of temporary disk space. Listings are materialized before leaving the child. Pure local path/URL construction and code outside filesystem calls do not get a child timeout. Database commits and publication are never covered by the child alarm. FPM request and daemon job limits still apply to the entire request/job and do not reset per operation.
 
 Spatie Fork handles parent SIGINT/SIGTERM/SIGQUIT by terminating children. Each upload child also arms its own OS alarm, so a parent killed with SIGKILL does not leave an indefinitely running upload child; the child still has its original remaining time limit. This cannot guarantee instant termination during uninterruptible kernel I/O or bound work already accepted by a remote service.
 
-Every intent stores a fixed deadline: **upload start + effective execution timeout + `cleanup_grace`**. Configuration changes do not shorten existing deadlines. Failed uploads may attempt immediate removal, but retain their journal even if removal succeeds: an accepted remote write could still complete later. Before the deadline cleanup neither deletes nor forgets these incomplete intents; after it, cleanup claims and verifies deletion normally. Incomplete stages cannot be explicitly discarded early to bypass this safeguard. Ready stages can be discarded immediately and never expire automatically.
+Each mutation journal stores its own fixed deadline: **operation start + effective execution timeout + `cleanup_grace`**, rounded up to the next whole second so database timestamp precision never shortens it. Forked operations add one further second to cover whole-second alarm rounding. Successful operations delete their journal; failed or uncertain operations retain it, including when storage succeeds but database acknowledgement fails. Starting another operation never resets an outstanding journal.
 
-Choose `cleanup_grace` to exceed the longest possible remote completion delay after writer termination. Three hours is a conservative default, not a proven upper bound for every driver/provider. Writes finishing beyond that contract, external/deferred writers, broken worker limits, and host-level failures are not universally fenced by this package. The new migration backfills existing intents with a fresh timeout-plus-grace deadline; drain old unbounded upload processes during upgrades. Rolling deployments can coexist when all writers honor the same bounded-write contract and share the metadata/disk configuration.
+The snapshot stage also tracks its latest recovery deadline, extended before each operation and never shortened. Cleanup claims an incomplete stage only after that deadline and all outstanding mutation deadlines, then removes the entire unpublished snapshot, including earlier successful files. A callback paused between operations may lose its stage to cleanup; subsequent filesystem calls and publication fail explicitly. Incomplete stages cannot be explicitly discarded early to bypass this safeguard. Ready stages can be discarded immediately and never expire automatically. Retained callback filesystem objects reject further operations after the callback ends; direct raw-adapter access is outside this guarantee.
+
+Choose `cleanup_grace` to exceed the longest possible remote completion delay after writer termination. Three hours is a conservative default, not a proven upper bound for every driver/provider. Writes finishing beyond that contract, external/deferred writers, broken worker limits, and host-level failures are not universally fenced by this package. Publish and run the operation-journal migration when upgrading, with writers and cleanup paused and old workers drained; do not mix the former whole-upload execution path with per-operation writers during deployment. Existing incomplete stages retain their previous recovery deadlines.
 
 Exceptions thrown after a database commit propagate without deleting the committed snapshot. If a failed package-managed commit leaves PDO in a transaction despite Laravel reporting transaction level zero, the package rolls back that transaction before deciding whether publication succeeded.
 
@@ -242,7 +250,7 @@ This protection intentionally allows a slow read to delay publication and cleanu
 
 Transaction handling relies on Laravel's connection APIs; do not bypass them with raw PDO commits/rollbacks. Database and filesystem operations are not a distributed transaction: process termination can leave staged files temporarily, but committed staging intents allow subsequent recovery. There are no package rollback/termination listeners responsible for physical deletion.
 
-Version metadata and cleanup discovery use the primary database connection rather than a potentially lagging read replica. Handlers and live stage objects retain their original metadata connection and filesystem instance even if configuration or container bindings change. Reloaded stages and the cleanup command resolve disks from their own application's configuration.
+Version metadata and cleanup discovery use the primary database connection rather than a potentially lagging read replica. Handlers and live stage objects retain their original metadata connection and filesystem configuration even if configuration or container bindings change. Reloaded stages and the cleanup command resolve disks from their own application's configuration.
 
 ### Configuration and Facade
 
@@ -265,6 +273,41 @@ $contents = VersionedStorage::get('reports/daily.csv', $version, disk: 's3');
 ```
 
 The same API is available through `SkyRaptor\LaravelVersionedStorage\Facades\VersionedStorage` and Laravel's auto-discovered `VersionedStorage` alias.
+
+## Testing in Laravel Applications
+
+For application tests, explicitly run uploads in the current process with `VersionedStorageTesting::runUploadsSynchronously()`. This works with in-memory SQLite, `Storage::fake()`, runtime-registered disks, mocks, and assertions inside upload callbacks. It uses the real metadata, versioning, publication, and cleanup implementation, not a separate fake storage implementation.
+
+After publishing the package migrations, a Pest feature test can use:
+
+```php
+use Illuminate\Foundation\Testing\DatabaseMigrations;
+use Illuminate\Support\Facades\Storage;
+use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+
+uses(DatabaseMigrations::class);
+
+beforeEach(function () {
+    Storage::fake('exports');
+    VersionedStorageTesting::runUploadsSynchronously();
+});
+
+it('stores a versioned report', function () {
+    $version = VersionedStorage::put('reports/daily.csv', 'contents', disk: 'exports');
+
+    expect(VersionedStorage::get('reports/daily.csv', disk: 'exports'))->toBe('contents');
+    Storage::disk('exports')->assertExists("reports/daily.csv/{$version}");
+});
+```
+
+In PHPUnit, call the helper from `setUp()` after `parent::setUp()`. The helper requires Laravel's testing environment and replaces only the upload execution policy in the current application container. Enable it for each fresh test application; it is never enabled automatically. Call `VersionedStorageTesting::restoreUploadExecution()` to restore the normal runtime policy in the same application.
+
+**Synchronous testing does not enforce a hard upload timeout.** Configured timeout/grace values still determine journal recovery deadlines, and invalid values are still rejected. Use real-process integration tests to verify process termination and server limits; do not enable this helper in those processes.
+
+Uploads still reject active metadata transactions. For tests exercising real uploads, use `DatabaseMigrations` or another database setup without an enclosing transaction, rather than `DatabaseTransactions` or transactional `RefreshDatabase`. Ensure no base test class wraps these tests in a transaction. Publishing an already-completed stage inside a transaction remains supported.
+
+The helper does not change Laravel's cleanup concurrency driver. If a test runs the cleanup command against fake disks or in-memory SQLite, explicitly set `config(['concurrency.default' => 'sync'])` in that test so deletion tasks use the same process.
 
 ## Changelog
 

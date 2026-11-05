@@ -9,9 +9,11 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Jobs\RedisJob;
 use Illuminate\Queue\Jobs\SyncJob;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
+use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
 use SkyRaptor\LaravelVersionedStorage\UploadContext;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use Symfony\Component\Console\Input\ArrayInput;
@@ -19,6 +21,7 @@ use Symfony\Component\Console\Output\NullOutput;
 
 function uploadContextForSapi(string $sapi): UploadContext
 {
+    VersionedStorageTesting::restoreUploadExecution();
     $context = new class($sapi) extends UploadContext
     {
         public function __construct(private readonly string $runtime) {}
@@ -42,7 +45,7 @@ it('uses the configured externally enforced FPM timeout and persists its cleanup
     expect($context->execution())->toBe(['timeout' => 60, 'fork' => false]);
     $stage = VersionedStorage::stage('report', 'contents');
     expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->value('cleanup_after'))
-        ->toBe(now()->addSeconds(10860)->toDateTimeString());
+        ->toBe(now()->addSeconds(10860)->ceilSecond()->toDateTimeString());
 });
 
 it('uses a supervised fork for CLI and the development HTTP server', function (string $sapi) {
@@ -96,7 +99,7 @@ it('retains a failed upload journal when a simulated remote write completes afte
     expect(DB::table('versioned_storage_stages')->count())->toBe(1);
 
     $disk->put('late-upload/'.$stage->version.'/delayed', 'Remote service completed after the client stopped.');
-    $this->travel(10859)->seconds();
+    $this->travelTo(Carbon::parse($stage->cleanup_after)->subSecond());
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
     $disk->assertExists('late-upload/'.$stage->version.'/delayed');
     expect(DB::table('versioned_storage_stages')->count())->toBe(1);
@@ -152,13 +155,15 @@ it('rejects invalid upload limits and grace durations before committing an inten
     ['cleanup_grace', -1], ['cleanup_grace', 'invalid'],
 ]);
 
-it('rejects in-memory databases before creating a forked upload intent', function () {
+it('supports in-memory metadata databases because only filesystem operations are forked', function () {
     if (! function_exists('pcntl_fork') || ! function_exists('posix_kill')) {
         $this->markTestSkipped('This validation requires fork support.');
     }
     uploadContextForSapi('cli');
-    expect(fn () => VersionedStorage::stage('report', 'contents'))->toThrow(RuntimeException::class, 'in-memory')
-        ->and(DB::table('versioned_storage_stages')->count())->toBe(0);
+    $stage = VersionedStorage::stage('report', 'contents');
+    expect($stage->publish())->toBe($stage->version)
+        ->and(VersionedStorage::get('report'))->toBe('contents')
+        ->and(DB::table('versioned_storage_operations')->count())->toBe(0);
 });
 
 it('retains incomplete upload tracking until the stored deadline regardless of later configuration', function () {
@@ -168,10 +173,11 @@ it('retains incomplete upload tracking until the stored deadline regardless of l
     DB::table('versioned_storage_versions')->where('version', $version)->delete();
     DB::table('versioned_storage_resources')->update(['current_version' => null]);
     DB::table('versioned_storage_stages')->update(['state' => 'uploading']);
+    $deadline = Carbon::parse(DB::table('versioned_storage_stages')->where('version', $version)->value('cleanup_after'));
     config()->set('laravel-versioned-storage.upload_timeout', 1);
     config()->set('laravel-versioned-storage.cleanup_grace', 0);
 
-    $this->travel(10859)->seconds();
+    $this->travelTo($deadline->copy()->subSecond());
     $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
     expect(DB::table('versioned_storage_stages')->where('version', $version)->exists())->toBeTrue();
     $this->travel(1)->seconds();

@@ -15,12 +15,13 @@ class VersionedFilesystem extends FilesystemAdapter
     public function __construct(
         private readonly FilesystemAdapter $filesystem,
         private readonly string $prefix,
+        ?UploadOperation $operation = null,
     ) {
         $config = $filesystem->getConfig();
         $config['throw'] = true;
         $config['prefix'] = trim(($config['prefix'] ?? '').'/'.$prefix, '/');
         parent::__construct(
-            new ScopedFilesystemOperator($filesystem->getDriver(), $prefix),
+            new ScopedFilesystemOperator($filesystem->getDriver(), $prefix, $operation),
             new PathPrefixedAdapter($filesystem->getAdapter(), $config['prefix']),
             $config,
         );

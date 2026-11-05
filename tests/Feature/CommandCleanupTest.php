@@ -427,7 +427,7 @@ it('retains the recovery journal through late storage completion after explicit 
         expect($writer->wait())->toBe(0, $writer->getOutput().$writer->getErrorOutput())
             ->and($writer->getOutput())->toContain(
                 "storage-completed\n",
-                "upload-failed: The upload lost its metadata transaction before completion.\n",
+                "upload-failed: The upload lost its metadata connection before operation completion.\n",
             )
             ->and(VersionedStorage::versions('crash-file'))->toBe([$first])
             ->and($connection->table('versioned_storage_stages')->where('version', $version)->value('state'))->toBe('uploading')

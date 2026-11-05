@@ -39,7 +39,7 @@ it('defaults to preserving older versions when a stage is published', function (
 
 it('commits upload intent before invoking a callback and marks completion only afterwards', function () {
     $stage = VersionedStorage::stageDirectory('staged', function (FilesystemAdapter $files): void {
-        expect(DB::transactionLevel())->toBe(1)
+        expect(DB::transactionLevel())->toBe(0)
             ->and(DB::table('versioned_storage_stages')->value('state'))->toBe('uploading')
             ->and(VersionedStorage::directory('staged')->versions())->toBe([]);
         $files->put('one', 'contents');

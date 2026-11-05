@@ -13,7 +13,13 @@ use Throwable;
 
 class ForkUpload
 {
-    public function run(Closure $task, int $seconds): void
+    /**
+     * @template TResult
+     *
+     * @param  Closure(): TResult  $task
+     * @return TResult
+     */
+    public function run(Closure $task, int $seconds): mixed
     {
         if ($seconds < 1) {
             throw new InvalidArgumentException('The forked upload time limit must be at least one second.');
@@ -44,11 +50,9 @@ class ForkUpload
                     pcntl_sigprocmask(SIG_UNBLOCK, [SIGALRM]);
                     pcntl_alarm($seconds);
                 })
-                ->run(function () use ($task): true|Throwable {
+                ->run(function () use ($task): array|Throwable {
                     try {
-                        $task();
-
-                        return true;
+                        return ['result' => $task()];
                     } catch (Throwable $exception) {
                         return $exception;
                     }
@@ -69,9 +73,11 @@ class ForkUpload
         }
 
         // A signal-killed task can produce empty output without Spatie reporting an error.
-        if ($result !== true) {
+        if (! is_array($result) || ! array_key_exists('result', $result)) {
             throw new RuntimeException("Forked upload timed out or exited abnormally (limit: {$seconds} seconds).");
         }
+
+        return $result['result'];
     }
 
     private function restoreSignalHandler(int $signal, mixed $handler): void

@@ -9,8 +9,8 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Orchestra\Testbench\Foundation\Application;
-use SkyRaptor\LaravelVersionedStorage\Tests\Support\FpmUploadContext;
-use SkyRaptor\LaravelVersionedStorage\UploadContext;
+use SkyRaptor\LaravelVersionedStorage\Testing\SynchronousUploadExecution;
+use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 
@@ -31,7 +31,7 @@ Application::create(resolvingCallback: function ($app) use ($database, $root): v
         $app['config']->set('filesystems.disks.local', ['driver' => 'local', 'root' => $root]);
     });
 }, options: ['extra' => ['providers' => [VersionedStorageServiceProvider::class], 'dont-discover' => ['*']]]);
-app()->instance(UploadContext::class, new FpmUploadContext);
+app()->instance(UploadExecutionPolicy::class, app(SynchronousUploadExecution::class));
 
 DB::connection()->beforeExecuting(function (string $sql, array $bindings, Connection $connection) use ($directory): void {
     if ($directory === 'register' && str_starts_with($sql, 'insert or ignore into "versioned_storage_disks"')) {

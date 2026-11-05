@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use League\Flysystem\Local\LocalFilesystemAdapter;
 use League\Flysystem\WhitespacePathNormalizer;
 use PDO;
 use RuntimeException;
@@ -101,7 +102,7 @@ class VersionedStorageHandler
     public function stage(Closure $callback, bool $publish = false, bool $cleanup = false): StagedVersion
     {
         $this->assertOutsideTransaction();
-        $execution = app(UploadContext::class)->execution();
+        $execution = app(UploadExecutionPolicy::class)->execution();
         $grace = filter_var(config('laravel-versioned-storage.cleanup_grace'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 0]]);
 
         if ($grace === false) {
@@ -113,14 +114,24 @@ class VersionedStorageHandler
         }
         $this->registerResource();
         $version = (string) Str::uuid();
+        $configuration = $this->diskFilesystem->getConfig();
+
+        if (! isset($configuration['driver']) && $this->diskFilesystem->getAdapter() instanceof LocalFilesystemAdapter) {
+            $configuration['driver'] = 'local';
+        }
+        $this->transaction(function () use ($version): void {
+            $this->connection()->table('versioned_storage_reservations')->insert(['version' => $version]);
+        });
+        $destination = $this->path.'/'.$version;
+        $exists = $execution['fork']
+            ? app(ForkUpload::class)->run(static fn (): bool => Storage::build($configuration)->exists($destination), $execution['timeout'])
+            : $this->diskFilesystem->exists($destination);
+
+        if ($exists) {
+            throw new RuntimeException("Version path [{$destination}] already exists.");
+        }
         $cleanupAfter = now()->addSeconds($execution['timeout'])->addSeconds($grace);
         $this->transaction(function () use ($version, $cleanupAfter): void {
-            $this->connection()->table('versioned_storage_reservations')->insert(['version' => $version]);
-
-            if ($this->diskFilesystem->exists($this->path.'/'.$version)) {
-                throw new RuntimeException("Version path [{$this->path}/{$version}] already exists.");
-            }
-
             $resource = $this->lockResource();
 
             if ($resource === null) {
@@ -131,34 +142,97 @@ class VersionedStorageHandler
             ]);
         });
 
-        // The committed intent survives rollback of the transaction protecting the upload.
-        try {
-            if ($execution['fork']) {
-                foreach (DB::getConnections() as $connection) {
-                    $connection->disconnect();
+        $pdo = null;
+        $operation = new UploadOperation(
+            $execution,
+            $configuration,
+            function (string $id, string $name) use ($version, $execution, $grace, &$pdo): void {
+                $this->assertOutsideTransaction();
+                $this->transaction(function () use ($id, $name, $version, $execution, $grace): void {
+                    $stage = $this->lockStage($version);
+
+                    if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
+                        throw new RuntimeException("Stage [{$version}] failed or was reclaimed before a filesystem operation.");
+                    }
+
+                    $deadline = now()->addSeconds($execution['timeout'])->addSeconds($grace)->ceilSecond();
+
+                    if ($execution['fork']) {
+                        // Whole-second alarms can expire just after the nominal deadline.
+                        $deadline->addSecond();
+                    }
+                    $this->stageQuery($version)->update([
+                        'cleanup_after' => max($stage->cleanup_after, $deadline->toDateTimeString()),
+                    ]);
+
+                    if ($name !== '') {
+                        $this->connection()->table('versioned_storage_operations')->insert([
+                            'id' => $id, 'version' => $version, 'operation' => $name, 'cleanup_after' => $deadline,
+                        ]);
+                    }
+                });
+                $pdo = $this->connection()->getPdo();
+            },
+            function (string $id) use ($version, &$pdo): void {
+                if ($this->connection()->getRawPdo() !== $pdo) {
+                    throw new RuntimeException('The upload lost its metadata connection before operation completion.');
                 }
-                $this->database->disconnect();
-                $path = $this->path;
-                $disk = $this->disk;
-                $directory = $this->directory;
-                $configuration = $this->diskFilesystem->getConfig();
-                $database = $this->database;
-                app(ForkUpload::class)->run(static function () use ($path, $disk, $directory, $configuration, $database, $version, $callback, $publish, $cleanup): void {
-                    config()->set("filesystems.disks.{$disk}", $configuration);
-                    Storage::forgetDisk($disk);
-                    (new self($path, $disk, $directory, $database))->upload($version, $callback, $publish, $cleanup);
-                }, $execution['timeout']);
-            } else {
-                $this->upload($version, $callback, $publish, $cleanup);
+                $this->assertOutsideTransaction();
+                $this->transaction(function () use ($id, $version): void {
+                    $stage = $this->lockStage($version);
+
+                    if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
+                        throw new RuntimeException("Stage [{$version}] failed or was reclaimed during a filesystem operation.");
+                    }
+
+                    if ($id !== '' && $this->connection()->table('versioned_storage_operations')->where('id', $id)->delete() !== 1) {
+                        throw new RuntimeException('The filesystem operation lost its durable journal.');
+                    }
+                });
+            },
+        );
+
+        try {
+            $filesystem = new VersionedFilesystem(
+                $this->diskFilesystem,
+                $this->directory ? $this->path.'/'.$version : $this->path,
+                $operation,
+            );
+
+            if ($this->directory) {
+                $filesystem->makeDirectory('');
             }
+            $callback($filesystem, $version);
+            $operation->assertHealthy();
+            $this->assertOutsideTransaction();
+            $operation->close();
+            $this->transaction(function () use ($version, $publish, $cleanup): void {
+                $stage = $this->lockStage($version);
+
+                if ($stage === null || $stage->state !== 'uploading' || $stage->failed
+                    || $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
+                    throw new RuntimeException("Stage [{$version}] failed or was reclaimed before upload completion.");
+                }
+                $this->stageQuery($version)->update(['state' => 'ready']);
+
+                if ($publish) {
+                    $this->publishStage($version, $cleanup);
+                }
+            });
         } catch (Throwable $exception) {
+            $operation->close();
+
             if (! $this->versionQuery()->where('version', $version)->exists()) {
                 try {
                     $this->transaction(function () use ($version, $exception): void {
                         $stage = $this->lockStage($version);
 
                         if ($stage !== null && $stage->state === 'uploading') {
-                            $this->removeVersion($version, $exception);
+                            $this->stageQuery($version)->update(['failed' => true]);
+
+                            if (! $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
+                                $this->removeVersion($version, $exception);
+                            }
                         }
                     });
                 } catch (Throwable $deletionException) {
@@ -174,40 +248,6 @@ class VersionedStorageHandler
         return new StagedVersion($this, $version);
     }
 
-    /**
-     * @param  Closure(FilesystemAdapter, string): mixed  $callback
-     */
-    private function upload(string $version, Closure $callback, bool $publish, bool $cleanup): void
-    {
-        $this->transaction(function () use ($version, $callback, $publish, $cleanup): void {
-            $level = $this->connection()->transactionLevel();
-            $stage = $this->lockStage($version);
-
-            if ($stage === null || $stage->state !== 'uploading' || $stage->cleanup_after <= now()->toDateTimeString()) {
-                throw new RuntimeException("Stage [{$version}] was reclaimed before uploading.");
-            }
-            $filesystem = $this->filesystem($version);
-
-            if ($this->directory) {
-                $filesystem->makeDirectory('');
-            }
-
-            $callback($filesystem, $version);
-
-            if ($this->connection()->transactionLevel() !== $level || ! $this->hasPdoTransaction($this->connection())) {
-                throw new RuntimeException('The upload lost its metadata transaction before completion.');
-            }
-
-            if ($this->stageQuery($version)->where('state', 'uploading')->update(['state' => 'ready']) !== 1) {
-                throw new RuntimeException("Stage [{$version}] was reclaimed before upload completion.");
-            }
-
-            if ($publish) {
-                $this->publishStage($version, $cleanup);
-            }
-        });
-    }
-
     private function assertForkable(): void
     {
         if (! function_exists('pcntl_fork') || ! function_exists('posix_kill')) {
@@ -216,11 +256,6 @@ class VersionedStorageHandler
         foreach (DB::getConnections() as $connection) {
             if ($connection->transactionLevel() > 0 || $this->hasPdoTransaction($connection)) {
                 throw new RuntimeException('Forked uploads cannot inherit active database transactions. Stage first.');
-            }
-
-            if ($connection->getDriverName() === 'sqlite'
-                && ($connection->getConfig('database') === ':memory:' || str_contains((string) $connection->getConfig('database'), 'mode=memory'))) {
-                throw new RuntimeException('Forked uploads require a persistent database, not in-memory SQLite.');
             }
         }
     }
@@ -354,6 +389,7 @@ class VersionedStorageHandler
                 throw new RuntimeException("Stage [{$version}] is not available for deletion.");
             }
             $this->removeVersion($version);
+            $this->connection()->table('versioned_storage_operations')->where('version', $version)->delete();
             $this->stageQuery($version)->delete();
         });
     }
@@ -377,7 +413,13 @@ class VersionedStorageHandler
                         || $stage->cleanup_after > now()->toDateTimeString()) {
                         return;
                     }
+
+                    if ($this->connection()->table('versioned_storage_operations')->where('version', $version)
+                        ->where('cleanup_after', '>', now())->exists()) {
+                        return;
+                    }
                     $this->retainDiscard($version);
+                    $this->connection()->table('versioned_storage_operations')->where('version', $version)->delete();
                     $this->stageQuery($version)->delete();
                 });
             }

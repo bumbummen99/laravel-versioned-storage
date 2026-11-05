@@ -302,9 +302,8 @@ it('serializes conflicting first registrations from separate processes', functio
 
             expect($process->waitUntil(fn (string $type, string $output): bool => str_contains($output, 'registering')))
                 ->toBeTrue($process->getErrorOutput().$process->getOutput());
-            usleep(100000);
-            expect($process->isRunning())->toBeTrue($process->getErrorOutput().$process->getOutput())
-                ->and($process->getOutput())->not->toContain('finished');
+            expect($process->wait())->toBe(0, $process->getErrorOutput().$process->getOutput())
+                ->and($process->getOutput())->toContain('rejected:')->not->toContain("accepted\n");
         }, disk: 'local');
 
         expect($process->wait())->toBe(0, $process->getErrorOutput().$process->getOutput())

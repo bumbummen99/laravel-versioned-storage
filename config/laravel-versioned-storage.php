@@ -8,7 +8,7 @@ return [
 
     'connection' => null,
 
-    // Must match the externally enforced FPM limit; also bounds CLI/development forks.
+    // Must match the FPM hard limit; CLI/development uses a fresh limit per filesystem operation.
     'upload_timeout' => 60,
 
     // Allow accepted remote writes to finish after their writer has stopped.

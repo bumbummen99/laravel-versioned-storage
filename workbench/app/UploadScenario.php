@@ -18,15 +18,6 @@ class UploadScenario
         $stage = VersionedStorage::stageDirectory($path, static function (FilesystemAdapter $files): void {
             $files->put('partial', (string) getmypid());
 
-            if (getenv('VERSIONED_STORAGE_TEST_WORKLOAD') === 'cpu') {
-                $until = hrtime(true) + 10_000_000_000;
-                while (hrtime(true) < $until) {
-                    hash('sha256', 'CPU-bound upload');
-                }
-            } elseif (getenv('VERSIONED_STORAGE_TEST_WORKLOAD') === 'blocked' || getenv('VERSIONED_STORAGE_TEST_SLOW') === '1') {
-                // On Unix, sleeping does not consume PHP's max_execution_time budget.
-                sleep(8);
-            }
             $files->put('finished', 'contents');
         });
         $stage->publish();

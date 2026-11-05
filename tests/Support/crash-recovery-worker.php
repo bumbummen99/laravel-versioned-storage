@@ -11,8 +11,8 @@ use League\Flysystem\Config;
 use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use Orchestra\Testbench\Foundation\Application;
-use SkyRaptor\LaravelVersionedStorage\Tests\Support\FpmUploadContext;
-use SkyRaptor\LaravelVersionedStorage\UploadContext;
+use SkyRaptor\LaravelVersionedStorage\Testing\SynchronousUploadExecution;
+use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 
@@ -34,7 +34,7 @@ Application::create(resolvingCallback: static function ($app) use ($database, $r
         $app['config']->set('concurrency.default', 'sync');
     });
 }, options: ['extra' => ['providers' => [VersionedStorageServiceProvider::class], 'dont-discover' => ['*']]]);
-app()->instance(UploadContext::class, new FpmUploadContext);
+app()->instance(UploadExecutionPolicy::class, app(SynchronousUploadExecution::class));
 
 if ($mode === 'cleanup') {
     $status = Artisan::call('laravel-versioned-storage:cleanup');
@@ -104,7 +104,7 @@ if ($mode === 'session-loss') {
         VersionedStorage::put('crash-file', new File($root.'/upload-source.txt'), cleanup: true);
     } catch (RuntimeException $exception) {
         if ($exception::class !== RuntimeException::class
-            || $exception->getMessage() !== 'The upload lost its metadata transaction before completion.') {
+            || $exception->getMessage() !== 'The upload lost its metadata connection before operation completion.') {
             throw $exception;
         }
         fwrite(STDOUT, 'upload-failed: '.$exception->getMessage()."\n");
