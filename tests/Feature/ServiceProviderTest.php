@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Support\Facades\Artisan;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 
@@ -34,16 +35,23 @@ it('registers publishable configuration and storage migrations', function () {
         ->and(array_values($migrations))->toBe([database_path('migrations')]);
 });
 
-it('loads the package translations', function () {
-    expect(trans('laravel-versioned-storage::messages.placeholder'))->toBe('VersionedStorage placeholder translation.');
+it('publishes only configuration and migrations under the combined tag', function () {
+    $paths = VersionedStorageServiceProvider::pathsToPublish(
+        VersionedStorageServiceProvider::class,
+        'laravel-versioned-storage',
+    );
+
+    expect(array_values($paths))->toEqualCanonicalizing([
+        config_path('laravel-versioned-storage.php'),
+        database_path('migrations'),
+    ]);
 });
 
-it('loads the package views', function () {
-    expect(view()->exists('laravel-versioned-storage::placeholder'))->toBeTrue();
-});
+it('registers only the storage cleanup command', function () {
+    $commands = array_filter(
+        array_keys(Artisan::all()),
+        fn (string $command): bool => str_starts_with($command, 'laravel-versioned-storage:'),
+    );
 
-it('registers the artisan command', function () {
-    $this->artisan('laravel-versioned-storage:placeholder')
-        ->expectsOutputToContain('VersionedStorage placeholder command executed.')
-        ->assertSuccessful();
+    expect(array_values($commands))->toBe(['laravel-versioned-storage:cleanup']);
 });

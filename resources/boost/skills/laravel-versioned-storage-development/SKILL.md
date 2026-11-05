@@ -96,6 +96,7 @@ Snapshot operations preserve restrictions implemented by the selected disk's Fly
 
 - Publish tag: `laravel-versioned-storage-migrations`.
 - Optional config tag: `laravel-versioned-storage-config`.
+- Combined config and migrations tag: `laravel-versioned-storage`. Run `php artisan migrate` after publishing.
 - See the package README for cleanup and failure semantics.
 
 ## Examples

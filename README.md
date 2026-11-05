@@ -28,13 +28,14 @@ You can install the package via Composer:
 composer require skyraptor/laravel-versioned-storage
 ```
 
-You may publish all of the package's resources at once:
+The package provides configuration and database migrations. You may publish both at once, then run the migrations:
 
 ```bash
 php artisan vendor:publish --tag="laravel-versioned-storage"
+php artisan migrate
 ```
 
-Or, you may publish each resource individually:
+Or publish them individually. Publishing configuration is optional; publishing and running the migrations is required:
 
 ### Publishing the Configuration File
 
@@ -47,24 +48,6 @@ php artisan vendor:publish --tag="laravel-versioned-storage-config"
 ```bash
 php artisan vendor:publish --tag="laravel-versioned-storage-migrations"
 php artisan migrate
-```
-
-### Publishing the Views
-
-```bash
-php artisan vendor:publish --tag="laravel-versioned-storage-views"
-```
-
-### Publishing the Translations
-
-```bash
-php artisan vendor:publish --tag="laravel-versioned-storage-lang"
-```
-
-### Publishing the Public Assets
-
-```bash
-php artisan vendor:publish --tag="laravel-versioned-storage-assets"
 ```
 
 ## Usage
