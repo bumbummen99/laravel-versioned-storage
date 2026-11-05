@@ -108,19 +108,12 @@ class FpmServer
 
     public function waitFor(callable $condition): void
     {
-        $until = microtime(true) + 15;
-        do {
-            if ($condition()) {
-                return;
-            }
-
-            if (($this->fpm !== null && ! $this->fpm->isRunning())
-                || ($this->nginx !== null && ! $this->nginx->isRunning())
-                || microtime(true) >= $until) {
-                throw new RuntimeException('FPM test server failed or timed out: '.$this->logs());
-            }
-            usleep(50_000);
-        } while (true);
+        ProcessWait::until(
+            $condition(...),
+            array_values(array_filter([$this->fpm, $this->nginx])),
+            15,
+            fn (): string => $this->logs(),
+        );
     }
 
     public function logs(): string

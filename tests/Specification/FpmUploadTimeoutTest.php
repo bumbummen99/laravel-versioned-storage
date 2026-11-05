@@ -6,6 +6,7 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\FpmServer;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\SubprocessFixture;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use Symfony\Component\Process\ExecutableFinder;
 
@@ -21,21 +22,15 @@ it('verifies real FPM upload safety across PHP, FPM and Nginx timeout settings',
         $this->markTestSkipped('Real FPM timeout tests require PHP-FPM and Nginx on Unix.');
     }
 
-    $server = new FpmServer;
-    $database = $server->directory.'/database.sqlite';
-    touch($database);
+    $fixture = new SubprocessFixture('uploads');
+    $server = null;
+    $database = $fixture->database;
     $disk = Storage::disk('local');
-    config()->set('database.connections.uploads', [
-        'driver' => 'sqlite', 'database' => $database, 'foreign_key_constraints' => true,
-    ]);
-    config()->set('laravel-versioned-storage.connection', 'uploads');
     $this->freezeTime();
     $timeout = $termination ?: 10;
 
     try {
-        foreach (glob(__DIR__.'/../../database/migrations/*.php') as $path) {
-            (require $path)->up();
-        }
+        $server = new FpmServer;
         $server->start($fpm, $nginx, $execution, $termination, $read, [
             'VERSIONED_STORAGE_TEST_DB' => $database,
             'VERSIONED_STORAGE_TEST_ROOT' => $disk->path(''),
@@ -103,9 +98,11 @@ it('verifies real FPM upload safety across PHP, FPM and Nginx timeout settings',
             $disk->assertMissing($prefix);
         }
     } finally {
-        config()->set('laravel-versioned-storage.connection', null);
-        DB::purge('uploads');
-        $server->stop();
+        try {
+            $server?->stop();
+        } finally {
+            $fixture->close();
+        }
     }
 })->with([
     'normal upload' => ['fast', 1, 4, 10, 200, 'published'],

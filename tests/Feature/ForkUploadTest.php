@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\File;
 use SkyRaptor\LaravelVersionedStorage\ForkUpload;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
 use Symfony\Component\Process\Process;
 
 describe('forked uploads', function () {
@@ -169,18 +170,16 @@ describe('forked uploads', function () {
 
         try {
             $process->start();
-            $deadline = microtime(true) + 3;
-            while (! file_exists($directory.'/child') && $process->isRunning() && microtime(true) < $deadline) {
-                usleep(10_000);
-            }
+            // The parent can be killed before the marker is read.
+            ProcessWait::until(fn (): bool => file_exists($directory.'/child'), [], 3, fn (): string => $process->getOutput().$process->getErrorOutput());
 
             expect(file_exists($directory.'/child'))->toBeTrue($process->getErrorOutput());
             $child = (int) file_get_contents($directory.'/child');
-            $deadline = microtime(true) + 3.5;
-            while (microtime(true) < $deadline) {
+            ProcessWait::observe(function () use ($process, $directory): bool {
                 $process->checkTimeout();
-                usleep(20_000);
-            }
+
+                return ! file_exists($directory.'/late');
+            }, [], 3.5, fn (): string => $process->getOutput().$process->getErrorOutput());
 
             expect($process->isRunning())->toBeFalse()
                 ->and($process->hasBeenSignaled())->toBeTrue($process->getErrorOutput())

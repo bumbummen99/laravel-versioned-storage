@@ -72,6 +72,18 @@ event to signal that it reached a transaction boundary, then verifies that
 the worker stays blocked until the protected read completes. Keep this
 implementation-sensitive synchronization isolated in the fixture.
 
+Use `tests/Support/ProcessWait` for bounded subprocess readiness and blocking
+observations. It uses monotonic time and includes process output and optional
+fixture logs on failure. Readiness may finish early; observations must hold
+for their full duration. Do not replace real upload timeout thresholds with
+generous fixture readiness budgets.
+
+`SubprocessFixture` owns an isolated SQLite database and any processes started
+through it. Always close it in `finally`, restoring configuration and stopping
+processes before deleting its temporary directory. Server-specific resources
+remain owned by the server fixture. `TestUploadClock` provides independent
+wall and monotonic time without changing Carbon's global test clock.
+
 Run all Pest tests without the additional quality checks:
 
 ```bash
