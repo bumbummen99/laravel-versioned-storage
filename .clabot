@@ -1,0 +1,4 @@
+{
+    "contributors": ["bumbummen99"],
+    "message": "Thanks for contributing! We do not yet have verified CLA acceptance for {{usersWithoutCLA}}. Please follow https://github.com/bumbummen99/laravel-versioned-storage/blob/master/.github/cla/README.md and submit a separate signing-only PR for CLA version 1.0. Maintainers review signing PRs manually; a failed CLA check on a signing PR is expected. Do not add yourself to the approved list. After approval, comment @cla-bot check on your contribution PR."
+}

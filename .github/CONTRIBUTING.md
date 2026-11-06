@@ -3,6 +3,15 @@
 Thank you for contributing to Laravel Versioned Storage. For significant
 changes, please open an issue first to discuss the behavior and approach.
 
+## Contributor Agreement
+
+Before submitting contributions, accept the [Contributor Licence Agreement
+version 1.0](../CLA.md) through a separate
+[signing pull request](cla/README.md). It permits future AGPL versions and
+changes to additional permissions or exceptions, not separate proprietary
+licensing. Contributors retain copyright. Existing contributions are not
+retroactively covered.
+
 ## Getting Started
 
 Use PHP 8.3+ on a Unix-like runtime with PCNTL, POSIX, and sockets.
