@@ -15,6 +15,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use League\Flysystem\Filesystem;
 use SkyRaptor\LaravelVersionedStorage\SnapshotDeletion;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Process\Process;
@@ -147,7 +148,7 @@ it('runs real process workers concurrently and reconciles their results in the p
     $second = null;
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
 
@@ -156,7 +157,7 @@ it('runs real process workers concurrently and reconciles their results in the p
         $current = VersionedStorage::put('one', 'replacement', cleanup: true, disk: 'concurrent');
         VersionedStorage::put('two', 'replacement', cleanup: true, disk: 'concurrent');
         $process = new Process([
-            PHP_BINARY, __DIR__.'/../../Support/concurrent-cleanup/artisan',
+            PHP_BINARY, TestPaths::root('tests/Support/concurrent-cleanup/artisan'),
             'laravel-versioned-storage:cleanup', '--chunk=2',
         ], null, [
             'VERSIONED_STORAGE_TEST_DB' => $database,
@@ -187,14 +188,14 @@ it('recovers failed staging cleanup after a process is killed with an outer tran
     ]);
     config()->set('laravel-versioned-storage.connection', 'recovery');
     $writer = new Process([
-        PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+        PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
         $database, $disk->path(''), 'stage',
     ]);
     $writer->setTimeout(15);
     $connection = DB::connection('recovery');
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
 
@@ -219,7 +220,7 @@ it('recovers failed staging cleanup after a process is killed with an outer tran
         $disk->assertExists($staged[0].'/one');
 
         $cleanup = new Process([
-            PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+            PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
             $database, $disk->path(''), 'cleanup',
         ]);
         $cleanup->setTimeout(15);
@@ -253,14 +254,14 @@ it('reconciles file uploads after a writer crashes', function (string $boundary,
     ]);
     config()->set('laravel-versioned-storage.connection', 'recovery');
     $writer = new Process([
-        PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+        PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
         $database, $disk->path(''), $boundary,
     ]);
     $writer->setTimeout(15);
     $connection = DB::connection('recovery');
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
 
@@ -286,7 +287,7 @@ it('reconciles file uploads after a writer crashes', function (string $boundary,
         $disk->assertExists($staged[0]);
 
         $cleanup = new Process([
-            PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+            PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
             $database, $disk->path(''), 'cleanup',
         ]);
         $cleanup->setTimeout(15);
@@ -339,13 +340,13 @@ it('does not reclaim a live upload while another process runs cleanup', function
     ]);
     config()->set('laravel-versioned-storage.connection', 'recovery');
     $writer = new Process([
-        PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+        PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
         $database, $disk->path(''), 'live-upload',
     ]);
     $writer->setTimeout(15);
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
         $disk->put('upload-source.txt', 'incomplete upload contents');
@@ -355,7 +356,7 @@ it('does not reclaim a live upload while another process runs cleanup', function
         $files = $disk->allFiles('crash-file');
         expect($files)->toHaveCount(1);
         $cleanup = new Process([
-            PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+            PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
             $database, $disk->path(''), 'cleanup',
         ]);
         $cleanup->setTimeout(15);
@@ -386,14 +387,14 @@ it('retains the recovery journal through late storage completion after explicit 
     ]);
     config()->set('laravel-versioned-storage.connection', 'recovery');
     $writer = new Process([
-        PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+        PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
         $database, $disk->path(''), 'session-loss',
     ]);
     $writer->setTimeout(15);
     $connection = DB::connection('recovery');
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
         $first = VersionedStorage::put('crash-file', 'original');
@@ -410,7 +411,7 @@ it('retains the recovery journal through late storage completion after explicit 
         expect($connection->table('versioned_storage_stages')->where('version', $version)->value('state'))->toBe('uploading');
 
         $cleanup = new Process([
-            PHP_BINARY, __DIR__.'/../../Support/crash-recovery-worker.php',
+            PHP_BINARY, TestPaths::root('tests/Support/crash-recovery-worker.php'),
             $database, $disk->path(''), 'cleanup',
         ]);
         $cleanup->setTimeout(15);

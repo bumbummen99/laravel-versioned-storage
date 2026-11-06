@@ -8,6 +8,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\UploadContext;
 use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
@@ -94,7 +95,7 @@ it('does not carry synchronous execution into a fresh Laravel application', func
     $current = app();
 
     try {
-        $application = new Application(dirname(__DIR__, 3));
+        $application = new Application(TestPaths::root());
         $application->instance('config', new Repository);
         $application->register(VersionedStorageServiceProvider::class);
 

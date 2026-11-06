@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Artisan;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 
@@ -30,7 +31,7 @@ it('registers publishable configuration and storage migrations', function () {
     );
 
     expect(array_values($config))->toBe([config_path('laravel-versioned-storage.php')])
-        ->and(array_map('realpath', array_keys($config)))->toBe([realpath(__DIR__.'/../../../config/laravel-versioned-storage.php')])
+        ->and(array_map('realpath', array_keys($config)))->toBe([realpath(TestPaths::root('config/laravel-versioned-storage.php'))])
         ->and($migrations)->toHaveCount(1)
         ->and(array_values($migrations))->toBe([database_path('migrations')]);
 });

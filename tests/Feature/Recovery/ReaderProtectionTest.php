@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\SubprocessFixture;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 it('holds reader protection until the filesystem operation completes', function (string $resourceType, string $readOperation) {
@@ -29,7 +30,7 @@ it('holds reader protection until the filesystem operation completes', function 
         $adapter->shouldReceive($exists ? 'fileExists' : 'read')->once()
             ->andReturnUsing(function (string $path) use (&$process, $database, $disk, $directory, $exists, $baseAdapter, $fixture): mixed {
                 $process = $fixture->start([
-                    PHP_BINARY, __DIR__.'/../../Support/cleanup-worker.php',
+                    PHP_BINARY, TestPaths::root('tests/Support/cleanup-worker.php'),
                     $database, $disk->path(''), $directory ? 'directory' : 'file',
                 ]);
                 ProcessWait::until(fn (): bool => str_contains($process->getOutput(), 'transaction-started'), [$process], 10);

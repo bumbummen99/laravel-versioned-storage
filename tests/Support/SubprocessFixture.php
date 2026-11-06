@@ -46,7 +46,7 @@ final class SubprocessFixture
                 'foreign_key_constraints' => true, 'busy_timeout' => $busyTimeout,
             ]);
             config()->set('laravel-versioned-storage.connection', $connection);
-            foreach (glob(__DIR__.'/../../database/migrations/*.php') as $path) {
+            foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
                 (require $path)->up();
             }
         } catch (Throwable $exception) {

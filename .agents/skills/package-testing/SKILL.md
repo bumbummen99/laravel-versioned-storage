@@ -40,6 +40,8 @@ Choose the suite first by purpose, then the matching responsibility group. Do no
 
 When moving tests, check relative fixture paths, Pest setup, PHPUnit discovery, and documentation or skill references. Preserve randomized execution and independent tests; directory organization must not impose execution dependencies.
 
+Use `SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths::root()` to locate repository resources such as migrations and worker scripts independently of test directory depth. Keep fixture setup and assertions visible; this helper only constructs paths.
+
 ## References
 
 - `tests/TestCase.php`

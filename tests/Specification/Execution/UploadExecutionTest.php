@@ -5,12 +5,13 @@ declare(strict_types=1);
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use Symfony\Component\Process\Exception\ProcessSignaledException;
 use Symfony\Component\Process\Process;
 
 it('keeps upload test commands disabled in ordinary Workbench sessions', function () {
-    $process = new Process([PHP_BINARY, __DIR__.'/../../../vendor/bin/testbench', 'list', '--raw'], null, [
+    $process = new Process([PHP_BINARY, TestPaths::root('vendor/bin/testbench'), 'list', '--raw'], null, [
         'VERSIONED_STORAGE_TEST_DB' => false,
         'VERSIONED_STORAGE_TEST_ROOT' => false,
     ]);
@@ -34,10 +35,10 @@ it('executes CLI uploads in a child and recovers timed-out uploads after their d
     config()->set('laravel-versioned-storage.connection', 'uploads');
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
-        $process = new Process([PHP_BINARY, __DIR__.'/../../../vendor/bin/testbench', 'test:upload'], null, [
+        $process = new Process([PHP_BINARY, TestPaths::root('vendor/bin/testbench'), 'test:upload'], null, [
             'VERSIONED_STORAGE_TEST_DB' => $database,
             'VERSIONED_STORAGE_TEST_ROOT' => $disk->path(''),
             'VERSIONED_STORAGE_TEST_SLOW' => $slow ? '1' : '0',
@@ -64,7 +65,7 @@ it('executes CLI uploads in a child and recovers timed-out uploads after their d
             expect($stage->state)->toBe('published')
                 ->and(VersionedStorage::directory('forked')->get('partial'))->not->toBe($parent[1])
                 ->and(VersionedStorage::directory('forked')->get('finished'))->toBe('contents');
-            $file = new Process([PHP_BINARY, __DIR__.'/../../../vendor/bin/testbench', 'test:upload-file'], null, [
+            $file = new Process([PHP_BINARY, TestPaths::root('vendor/bin/testbench'), 'test:upload-file'], null, [
                 'VERSIONED_STORAGE_TEST_DB' => $database,
                 'VERSIONED_STORAGE_TEST_ROOT' => $disk->path(''),
             ]);
@@ -97,15 +98,15 @@ it('uses actual worker and job limits and retains a killed job upload until clea
     ];
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
-        $enqueue = new Process([PHP_BINARY, __DIR__.'/../../../vendor/bin/testbench', 'test:enqueue-upload', $limit, $slow ? 'slow' : 'fast'], null, $environment);
+        $enqueue = new Process([PHP_BINARY, TestPaths::root('vendor/bin/testbench'), 'test:enqueue-upload', $limit, $slow ? 'slow' : 'fast'], null, $environment);
         $enqueue->setTimeout(15);
         $enqueue->run();
         expect($enqueue->isSuccessful())->toBeTrue($enqueue->getOutput().$enqueue->getErrorOutput());
         $process = new Process([
-            PHP_BINARY, __DIR__.'/../../../vendor/bin/testbench',
+            PHP_BINARY, TestPaths::root('vendor/bin/testbench'),
             'queue:work', '--stop-when-empty', '--sleep=0', '--tries=1', '--timeout='.($limit === 'job' ? '10' : '1'),
         ], null, $environment);
         $process->setTimeout(15);
@@ -161,14 +162,14 @@ it('forks uploads served by the real PHP development server', function (bool $sl
     expect($socket)->not->toBeFalse();
     $address = stream_socket_get_name($socket, false);
     fclose($socket);
-    $server = new Process([PHP_BINARY, '-S', $address, __DIR__.'/../../Support/upload-timeout/http.php'], null, [
+    $server = new Process([PHP_BINARY, '-S', $address, TestPaths::root('tests/Support/upload-timeout/http.php')], null, [
         'VERSIONED_STORAGE_TEST_DB' => $database, 'VERSIONED_STORAGE_TEST_ROOT' => $disk->path(''),
         'VERSIONED_STORAGE_TEST_SLOW' => $slow ? '1' : '0',
     ]);
     $server->setTimeout(15);
 
     try {
-        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
+        foreach (glob(TestPaths::root('database/migrations/*.php')) as $path) {
             (require $path)->up();
         }
         $server->start();

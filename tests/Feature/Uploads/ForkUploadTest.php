@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Support\Facades\File;
 use SkyRaptor\LaravelVersionedStorage\ForkUpload;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use Symfony\Component\Process\Process;
 
 describe('forked uploads', function () {
@@ -65,7 +66,7 @@ describe('forked uploads', function () {
             PHP_BINARY,
             '-d',
             'disable_functions=pcntl_fork',
-            dirname(__DIR__, 2).'/Support/fork-upload-worker.php',
+            TestPaths::root('tests/Support/fork-upload-worker.php'),
             $this->forkUploadDirectory,
         ]);
         $process->setTimeout(3);
@@ -164,7 +165,7 @@ describe('forked uploads', function () {
 
     it('prevents later child writes when the parent is terminated', function (string $signal) {
         $directory = $this->forkUploadDirectory;
-        $process = new Process([PHP_BINARY, dirname(__DIR__, 2).'/Support/fork-upload-worker.php', $directory, $signal]);
+        $process = new Process([PHP_BINARY, TestPaths::root('tests/Support/fork-upload-worker.php'), $directory, $signal]);
         $process->setTimeout(6);
         $child = null;
 

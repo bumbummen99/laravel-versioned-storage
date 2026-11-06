@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SkyRaptor\LaravelVersionedStorage\Tests;
 
 use Orchestra\Testbench\TestCase as Orchestra;
+use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 
 abstract class TestCase extends Orchestra
@@ -16,7 +17,7 @@ abstract class TestCase extends Orchestra
 
     protected function defineDatabaseMigrations(): void
     {
-        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
+        $this->loadMigrationsFrom(TestPaths::root('database/migrations'));
     }
 
     protected function getPackageProviders($app): array
