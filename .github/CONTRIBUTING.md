@@ -39,7 +39,9 @@ composer test:unit
 ```
 
 Despite its name, `composer test:unit` runs all Pest suites, not only unit
-tests. To format code, use `composer lint`. For a focused test run:
+tests. `composer test:types` disables Pest's shared type-coverage cache to
+avoid corrupted cache files during concurrent analysis; it still enforces
+100% type coverage. To format code, use `composer lint`. For a focused test run:
 
 ```bash
 vendor/bin/pest tests/Specification/Storage/FileTest.php
