@@ -2,12 +2,44 @@
 
 declare(strict_types=1);
 
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
 use League\Flysystem\UnableToDeleteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+
+it('reports each cleanup failure, deletes later snapshots, and rethrows the first failure', function () {
+    $first = VersionedStorage::put('multiple-failures', 'first');
+    $second = VersionedStorage::put('multiple-failures', 'second');
+    $third = VersionedStorage::put('multiple-failures', 'third');
+    $current = VersionedStorage::put('multiple-failures', 'current', cleanup: true);
+    $firstFailure = new RuntimeException('first deletion refused');
+    $secondFailure = new RuntimeException('second deletion refused');
+    $disk = Storage::disk('local');
+    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    $adapter->shouldReceive('delete')->once()->with("multiple-failures/{$first}")->andThrow($firstFailure);
+    $adapter->shouldReceive('delete')->once()->with("multiple-failures/{$second}")->andThrow($secondFailure);
+    $reported = [];
+    $exceptionHandler = Mockery::mock(app(ExceptionHandler::class))->makePartial();
+    $exceptionHandler->shouldReceive('report')->twice()->andReturnUsing(function (Throwable $exception) use (&$reported): void {
+        $reported[] = $exception;
+    });
+    app()->instance(ExceptionHandler::class, $exceptionHandler);
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => true]));
+
+    try {
+        expect(fn () => VersionedStorage::cleanup('multiple-failures'))->toThrow($firstFailure);
+        expect($reported)->toBe([$firstFailure, $secondFailure])
+            ->and(DB::table('versioned_storage_versions')->orderBy('id')->pluck('version')->all())
+            ->toBe([$first, $second, $current]);
+        $disk->assertMissing("multiple-failures/{$third}");
+        $disk->assertExists(["multiple-failures/{$first}", "multiple-failures/{$second}", "multiple-failures/{$current}"]);
+    } finally {
+        Storage::set('local', $disk);
+    }
+});
 
 it('retains failed cleanup records and can retry cleanup without publishing again', function () {
     $first = VersionedStorage::put('retry', 'original');
