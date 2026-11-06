@@ -19,14 +19,14 @@ final class UploadOperation
     /**
      * @param  array{timeout: int, fork: bool}  $execution
      * @param  array<string, mixed>  $configuration
-     * @param  Closure(string, string, UploadDeadline): void  $begin
-     * @param  Closure(string): void  $complete
+     * @param  Closure(string, string, UploadDeadline): void  $beginOperation
+     * @param  Closure(string): void  $acknowledgeOperation
      */
     public function __construct(
         private readonly array $execution,
         private readonly array $configuration,
-        private readonly Closure $begin,
-        private readonly Closure $complete,
+        private readonly Closure $beginOperation,
+        private readonly Closure $acknowledgeOperation,
     ) {}
 
     public function assertHealthy(): void
@@ -76,11 +76,11 @@ final class UploadOperation
 
         try {
             // Read operations also lock/check the stage, but do not leave mutation journals.
-            ($this->begin)($id, $mutation ? $operation : '', $deadline);
+            ($this->beginOperation)($id, $mutation ? $operation : '', $deadline);
             $result = $execute(app(FilesystemOperationExecutor::class), $deadline);
 
             try {
-                ($this->complete)($mutation ? $id : '');
+                ($this->acknowledgeOperation)($mutation ? $id : '');
             } catch (Throwable $exception) {
                 if ($cleanupOnAcknowledgmentFailure !== null) {
                     $cleanupOnAcknowledgmentFailure($result);
