@@ -24,9 +24,9 @@ php artisan vendor:publish --tag="laravel-versioned-storage"
 php artisan migrate
 ```
 
-The publish tag includes configuration and migrations. To publish only the
-required migrations, use `laravel-versioned-storage-migrations`; configuration
-is optional and uses `laravel-versioned-storage-config`.
+The publish tag includes configuration and one initial-schema migration. To
+publish only the required migration, use `laravel-versioned-storage-migrations`;
+configuration is optional and uses `laravel-versioned-storage-config`.
 
 ## Usage
 
@@ -165,9 +165,9 @@ with `disk: 's3'`. The same API is available through
   `false` from `exists()` and throw from `get()`. Download URLs are not protected
   from later cleanup; temporary upload URLs are unsupported. Forked stream
   reads buffer locally, so allow temporary disk space.
-- When upgrading, publish/run all migrations with writers and cleanup paused
-  and old workers drained. Previously untracked crash files cannot be recovered
-  retroactively.
+- The initial migration replaces the unreleased migration history, not existing
+  schemas. Earlier development installations need a backed-up schema rebuild
+  with writers/cleanup paused and old workers drained.
 
 ## Testing in Laravel Applications
 

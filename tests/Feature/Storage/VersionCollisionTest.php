@@ -163,11 +163,8 @@ it('preserves unregistered data at a generated version path', function (bool $di
     }
 })->with([false, true]);
 
-it('reserves existing versions when upgrading the reservations migration', function () {
+it('reserves published versions before another upload can reuse their UUID', function () {
     $version = VersionedStorage::put('existing', 'original');
-    $migration = require TestPaths::root('database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php');
-    $migration->down();
-    $migration->up();
     Str::createUuidsUsing(fn () => $version);
 
     try {
