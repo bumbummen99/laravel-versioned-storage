@@ -94,7 +94,7 @@ it('does not carry synchronous execution into a fresh Laravel application', func
     $current = app();
 
     try {
-        $application = new Application(dirname(__DIR__, 2));
+        $application = new Application(dirname(__DIR__, 3));
         $application->instance('config', new Repository);
         $application->register(VersionedStorageServiceProvider::class);
 

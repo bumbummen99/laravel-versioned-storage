@@ -30,7 +30,13 @@ Prove package behavior with Pest 4/5, Orchestra Testbench, and the local `tests/
 
 Specification and Feature both use Testbench through `tests/Pest.php`; shared setup does not make their purposes interchangeable. Keep Specification separate rather than moving consumer examples into Feature merely because they boot Laravel.
 
-Keep small suites flat. When grouping a growing suite, use shallow responsibility-based subdirectories and follow the existing layout; do not invent folders for each new test. Feature subdirectories are a possible reorganization, not the current layout.
+Use the existing shallow responsibility-based groups:
+
+- Specification: `Storage` for consumer file/directory examples; `Execution` for runtime and timeout guarantees.
+- Feature: `Storage` for resource ownership, versions, and stages; `Filesystem` for operator configuration, prefixes, and URLs; `Drivers` for driver compatibility; `Uploads` for operation lifecycle, journals, deadlines, and execution; `Transactions` for transaction safety; `Recovery` for cleanup and reader protection; `Package` for service provider wiring; `TestSupport` for Testbench-backed harness tests.
+- Unit: `Filesystem` for isolated operators; `Uploads` for isolated deadlines and execution; `TestSupport` for process helper behavior.
+
+Choose the suite first by purpose, then the matching responsibility group. Do not put harness tests in consumer specifications or create a folder for each new test. Keep shared fixtures in `tests/Support`, not in the suite's `TestSupport` test directory.
 
 When moving tests, check relative fixture paths, Pest setup, PHPUnit discovery, and documentation or skill references. Preserve randomized execution and independent tests; directory organization must not impose execution dependencies.
 

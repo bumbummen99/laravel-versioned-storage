@@ -312,13 +312,13 @@ it('preserves completed stages while retiring previously published snapshots', f
 it('uses the configured metadata connection for migrations and operations', function () {
     config()->set('database.connections.metadata', config('database.connections.testing'));
     config()->set('laravel-versioned-storage.connection', 'metadata');
-    $migration = require __DIR__.'/../../database/migrations/2026_01_01_000000_create_versioned_storage_tables.php';
-    $cleanupMigration = require __DIR__.'/../../database/migrations/2026_01_01_000001_add_pending_delete_to_versioned_storage_versions.php';
-    $disksMigration = require __DIR__.'/../../database/migrations/2026_01_01_000002_create_versioned_storage_disks_table.php';
-    $reservationsMigration = require __DIR__.'/../../database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php';
-    $stagesMigration = require __DIR__.'/../../database/migrations/2026_01_01_000004_create_versioned_storage_stages_table.php';
-    $deadlineMigration = require __DIR__.'/../../database/migrations/2026_01_01_000005_add_cleanup_after_to_versioned_storage_stages.php';
-    $operationsMigration = require __DIR__.'/../../database/migrations/2026_01_01_000006_create_versioned_storage_operations_table.php';
+    $migration = require __DIR__.'/../../../database/migrations/2026_01_01_000000_create_versioned_storage_tables.php';
+    $cleanupMigration = require __DIR__.'/../../../database/migrations/2026_01_01_000001_add_pending_delete_to_versioned_storage_versions.php';
+    $disksMigration = require __DIR__.'/../../../database/migrations/2026_01_01_000002_create_versioned_storage_disks_table.php';
+    $reservationsMigration = require __DIR__.'/../../../database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php';
+    $stagesMigration = require __DIR__.'/../../../database/migrations/2026_01_01_000004_create_versioned_storage_stages_table.php';
+    $deadlineMigration = require __DIR__.'/../../../database/migrations/2026_01_01_000005_add_cleanup_after_to_versioned_storage_stages.php';
+    $operationsMigration = require __DIR__.'/../../../database/migrations/2026_01_01_000006_create_versioned_storage_operations_table.php';
     $migration->up();
     $cleanupMigration->up();
     $disksMigration->up();

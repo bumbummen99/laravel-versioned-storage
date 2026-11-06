@@ -164,7 +164,7 @@ it('preserves unregistered data at a generated version path', function (bool $di
 
 it('reserves existing versions when upgrading the reservations migration', function () {
     $version = VersionedStorage::put('existing', 'original');
-    $migration = require __DIR__.'/../../database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php';
+    $migration = require __DIR__.'/../../../database/migrations/2026_01_01_000003_create_versioned_storage_reservations_table.php';
     $migration->down();
     $migration->up();
     Str::createUuidsUsing(fn () => $version);
@@ -192,14 +192,14 @@ it('rejects a colliding writer in another process while the first snapshot is st
     $process = null;
 
     try {
-        foreach (glob(__DIR__.'/../../database/migrations/*.php') as $path) {
+        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
             (require $path)->up();
         }
 
         $version = VersionedStorage::directory('protected', function (FilesystemAdapter $files) use (&$process, $database, $uuid): void {
             $files->put('one', 'original');
             $process = new Process([
-                PHP_BINARY, __DIR__.'/../Support/cleanup-worker.php',
+                PHP_BINARY, __DIR__.'/../../Support/cleanup-worker.php',
                 $database, Storage::disk('local')->path(''), 'collision', (string) $uuid,
             ]);
             $process->setTimeout(10);

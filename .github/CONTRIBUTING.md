@@ -42,7 +42,7 @@ Despite its name, `composer test:unit` runs all Pest suites, not only unit
 tests. To format code, use `composer lint`. For a focused test run:
 
 ```bash
-vendor/bin/pest tests/Specification/FileTest.php
+vendor/bin/pest tests/Specification/Storage/FileTest.php
 ```
 
 CI validates Ubuntu and macOS across the supported PHP/Laravel versions
@@ -58,6 +58,18 @@ Choose the category that matches the behavior:
 - `tests/Specification`: acceptance tests defining the public package contract.
 - `tests/ArchTest.php`: architecture constraints.
 - `tests/Support`: reusable fixtures and subprocess helpers, not a test suite.
+
+Within each suite, tests are grouped by responsibility:
+
+| Suite | Subdirectories |
+| --- | --- |
+| Specification | `Storage` (consumer file/directory examples), `Execution` (runtime and timeout guarantees) |
+| Feature | `Storage`, `Filesystem`, `Drivers`, `Uploads`, `Transactions`, `Recovery`, `Package`, `TestSupport` |
+| Unit | `Filesystem`, `Uploads`, `TestSupport` |
+
+Use the existing group matching the behavior. For example, run all driver
+integration tests with `vendor/bin/pest tests/Feature/Drivers`. Grouping is
+for navigation; tests must remain independent of execution order.
 
 Prefer observable behavior over internal query shapes or incidental call
 counts. Use descriptive test names, explicit scenarios, distinct revision

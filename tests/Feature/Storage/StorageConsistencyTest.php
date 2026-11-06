@@ -279,7 +279,7 @@ it('serializes conflicting first registrations from separate processes', functio
     $connection = DB::connection('ownership');
 
     try {
-        foreach (glob(__DIR__.'/../../database/migrations/*.php') as $path) {
+        foreach (glob(__DIR__.'/../../../database/migrations/*.php') as $path) {
             (require $path)->up();
         }
 
@@ -294,7 +294,7 @@ it('serializes conflicting first registrations from separate processes', functio
         ): void {
             $files->put('one', 'original');
             $process = new Process([
-                PHP_BINARY, __DIR__.'/../Support/cleanup-worker.php',
+                PHP_BINARY, __DIR__.'/../../Support/cleanup-worker.php',
                 $database, $disk->path(''), 'register', $rejected,
             ]);
             $process->setTimeout(10);

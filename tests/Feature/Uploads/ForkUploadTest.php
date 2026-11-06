@@ -65,7 +65,7 @@ describe('forked uploads', function () {
             PHP_BINARY,
             '-d',
             'disable_functions=pcntl_fork',
-            dirname(__DIR__).'/Support/fork-upload-worker.php',
+            dirname(__DIR__, 2).'/Support/fork-upload-worker.php',
             $this->forkUploadDirectory,
         ]);
         $process->setTimeout(3);
@@ -164,7 +164,7 @@ describe('forked uploads', function () {
 
     it('prevents later child writes when the parent is terminated', function (string $signal) {
         $directory = $this->forkUploadDirectory;
-        $process = new Process([PHP_BINARY, dirname(__DIR__).'/Support/fork-upload-worker.php', $directory, $signal]);
+        $process = new Process([PHP_BINARY, dirname(__DIR__, 2).'/Support/fork-upload-worker.php', $directory, $signal]);
         $process->setTimeout(6);
         $child = null;
 
