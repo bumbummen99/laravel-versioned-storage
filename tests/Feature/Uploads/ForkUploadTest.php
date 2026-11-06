@@ -62,6 +62,7 @@ describe('forked uploads', function () {
     })->with([0, -1]);
 
     it('reports an unsupported runtime explicitly instead of running the task inline', function () {
+        (new ForkUpload)->run(function (): void {}, 5);
         $process = new Process([
             PHP_BINARY,
             '-d',
@@ -162,6 +163,28 @@ describe('forked uploads', function () {
             pcntl_async_signals($previousAsync);
         }
     })->with([false, true]);
+
+    it('restores parent handlers after a child exits abnormally', function () {
+        $previous = [];
+        $handler = function (): void {};
+        foreach ([SIGQUIT, SIGTERM, SIGINT] as $signal) {
+            $previous[$signal] = pcntl_signal_get_handler($signal);
+            pcntl_signal($signal, $handler);
+        }
+
+        try {
+            expect(fn () => (new ForkUpload)->run(function (): never {
+                exit(1);
+            }, 5))->toThrow(RuntimeException::class, 'exited abnormally');
+            foreach ([SIGQUIT, SIGTERM, SIGINT] as $signal) {
+                expect(pcntl_signal_get_handler($signal))->toBe($handler);
+            }
+        } finally {
+            foreach ($previous as $signal => $original) {
+                pcntl_signal($signal, $original);
+            }
+        }
+    });
 
     it('prevents later child writes when the parent is terminated', function (string $signal) {
         $directory = $this->forkUploadDirectory;

@@ -5,6 +5,7 @@ declare(strict_types=1);
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Http\File;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Config;
 use League\Flysystem\Filesystem;
@@ -20,6 +21,34 @@ it('writes uploaded and local file contents to the exact version filename', func
         ->and(VersionedStorage::get('upload'))->toBe('uploaded')
         ->and(Storage::disk('local')->fileExists("local-file/{$second}"))->toBeTrue()
         ->and(VersionedStorage::get('local-file'))->toBe('uploaded');
+});
+
+it('rejects a supplied file that disappeared before it could be opened', function () {
+    $path = tempnam(sys_get_temp_dir(), 'versioned-missing-upload-');
+    $file = new File($path);
+    unlink($path);
+    $warnings = [];
+    set_error_handler(function (int $severity, string $message) use (&$warnings): bool {
+        if ($severity !== E_WARNING || ! str_starts_with($message, 'fopen(')) {
+            return false;
+        }
+        $warnings[] = $message;
+
+        return true;
+    });
+
+    try {
+        expect(fn () => VersionedStorage::put('missing-upload', $file))
+            ->toThrow(RuntimeException::class, 'Unable to open the supplied file for reading.');
+        expect($warnings)->toHaveCount(1)
+            ->and($warnings[0])->toContain($path)
+            ->and(VersionedStorage::versions('missing-upload'))->toBe([])
+            ->and(DB::table('versioned_storage_operations')->count())->toBe(0)
+            ->and(DB::table('versioned_storage_stages')->sole()->failed)->toBe(1);
+        Storage::disk('local')->assertDirectoryEmpty('missing-upload');
+    } finally {
+        restore_error_handler();
+    }
 });
 
 it('closes the supplied file stream after successful or failed writes', function (bool $failWrite) {

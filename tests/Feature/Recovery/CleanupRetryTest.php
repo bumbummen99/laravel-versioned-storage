@@ -10,6 +10,36 @@ use League\Flysystem\Filesystem;
 use League\Flysystem\UnableToDeleteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
+it('reports stage recovery failures and leaves the failed stage available for retry', function () {
+    $stage = VersionedStorage::stageDirectory('stage-recovery', function (FilesystemAdapter $files): void {
+        $files->put('one', 'contents');
+    });
+    DB::table('versioned_storage_stages')->where('version', $stage->version)->update([
+        'state' => 'discarding',
+        'cleanup_after' => now()->subSecond(),
+    ]);
+    $disk = Storage::disk('local');
+    DB::statement("CREATE TRIGGER reject_stage_recovery BEFORE INSERT ON versioned_storage_versions WHEN NEW.pending_delete = 1 BEGIN SELECT RAISE(FAIL, 'stage recovery failed'); END");
+    $exceptionHandler = Mockery::mock(ExceptionHandler::class);
+    $exceptionHandler->shouldReceive('report')->once()->with(Mockery::on(
+        fn (Throwable $exception): bool => str_contains($exception->getMessage(), 'stage recovery failed'),
+    ));
+    app()->instance(ExceptionHandler::class, $exceptionHandler);
+
+    try {
+        $this->artisan('laravel-versioned-storage:cleanup')
+            ->expectsOutputToContain('stage recovery failed')->assertFailed();
+        expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeTrue();
+        $disk->assertExists("stage-recovery/{$stage->version}/one");
+    } finally {
+        DB::statement('DROP TRIGGER reject_stage_recovery');
+    }
+
+    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
+    expect(DB::table('versioned_storage_stages')->where('version', $stage->version)->exists())->toBeFalse();
+    $disk->assertMissing("stage-recovery/{$stage->version}");
+});
+
 it('reports each cleanup failure, deletes later snapshots, and rethrows the first failure', function () {
     $first = VersionedStorage::put('multiple-failures', 'first');
     $second = VersionedStorage::put('multiple-failures', 'second');
@@ -26,6 +56,7 @@ it('reports each cleanup failure, deletes later snapshots, and rethrows the firs
     $exceptionHandler->shouldReceive('report')->twice()->andReturnUsing(function (Throwable $exception) use (&$reported): void {
         $reported[] = $exception;
     });
+
     app()->instance(ExceptionHandler::class, $exceptionHandler);
     Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => true]));
 
@@ -36,6 +67,26 @@ it('reports each cleanup failure, deletes later snapshots, and rethrows the firs
             ->toBe([$first, $second, $current]);
         $disk->assertMissing("multiple-failures/{$third}");
         $disk->assertExists(["multiple-failures/{$first}", "multiple-failures/{$second}", "multiple-failures/{$current}"]);
+    } finally {
+        Storage::set('local', $disk);
+    }
+});
+
+it('reports the upload failure when removing its incomplete snapshot also fails', function () {
+    $uploadFailure = new RuntimeException('callback failed');
+    $deletionFailure = new RuntimeException('snapshot deletion failed');
+    $disk = Storage::disk('local');
+    $adapter = Mockery::mock($disk->getAdapter())->makePartial();
+    $adapter->shouldReceive('deleteDirectory')->once()->andThrow($deletionFailure);
+    Storage::set('local', new FilesystemAdapter(new Filesystem($adapter), $adapter, ['throw' => true]));
+    $exceptionHandler = Mockery::mock(ExceptionHandler::class);
+    $exceptionHandler->shouldReceive('report')->once()->with($uploadFailure);
+    app()->instance(ExceptionHandler::class, $exceptionHandler);
+
+    try {
+        expect(fn () => VersionedStorage::directory('failed-snapshot', fn () => throw $uploadFailure))
+            ->toThrow($deletionFailure);
+        expect(VersionedStorage::directory('failed-snapshot')->versions())->toBe([]);
     } finally {
         Storage::set('local', $disk);
     }

@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Concurrency\ConcurrencyManager;
+use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
@@ -60,6 +61,12 @@ it('retains metadata after a worker process or bulk database failure and reconci
     $first = VersionedStorage::put('reports', 'original');
     VersionedStorage::put('reports', 'replacement', cleanup: true);
     $connection = DB::connection();
+    $exceptionHandler = Mockery::mock(ExceptionHandler::class);
+    $exceptionHandler->shouldReceive('report')->once()->with(Mockery::on(
+        fn (Throwable $exception): bool => str_contains($exception->getMessage(),
+            $databaseFailure ? 'database unavailable' : 'worker process interrupted'),
+    ));
+    app()->instance(ExceptionHandler::class, $exceptionHandler);
 
     if ($databaseFailure) {
         $connection->statement("CREATE TRIGGER reject_cleanup BEFORE DELETE ON versioned_storage_versions BEGIN SELECT RAISE(FAIL, 'database unavailable'); END");

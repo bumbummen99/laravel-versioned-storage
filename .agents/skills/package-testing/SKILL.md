@@ -27,6 +27,7 @@ Prove package behavior with Pest 4/5, Orchestra Testbench, and the local `tests/
 - Whole-package analysis is the default. For optional targeted investigations, invoke `vendor/bin/pest --mutate --parallel --class=...` directly. Do not add `--class` to the Composer command: Pest ignores class selection with `--everything`.
 - Use `--no-cache` to measure fresh results and `--min=...` only when intentionally enforcing a reviewed score. Do not claim a passing command proves all mutants were detected: inspect tested, surviving, and uncovered counts.
 - Investigate survivors rather than weakening assertions or adding blanket ignores. Parent-process coverage does not prove behavior executed in independent children.
+- For runtime-guard tests, exercise the supported entry point in the parent and use `tests/Support/autoload.php` in independent PHP workers. This allows coverage-based test selection and propagates Pest's mutated source without pretending to collect child coverage.
 
 ## Test Organization
 

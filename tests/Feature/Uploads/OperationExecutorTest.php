@@ -15,6 +15,23 @@ use SkyRaptor\LaravelVersionedStorage\UploadClock;
 use SkyRaptor\LaravelVersionedStorage\UploadDeadline;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
+it('closes the callback filesystem after a callback failure without an uncertain operation', function () {
+    $failure = new RuntimeException('callback failed');
+    $retained = null;
+
+    expect(function () use (&$retained, $failure): void {
+        VersionedStorage::stageDirectory('reports', function (FilesystemAdapter $files) use (&$retained, $failure): never {
+            $retained = $files;
+
+            throw $failure;
+        });
+    })->toThrow($failure);
+    expect($retained)->toBeInstanceOf(FilesystemAdapter::class);
+    expect(fn () => $retained->put('late', 'stray contents'))
+        ->toThrow(RuntimeException::class, 'The snapshot callback has already finished.');
+    Storage::disk('local')->assertDirectoryEmpty('reports');
+});
+
 it('can inject an operation failure without mocking disk internals or bypassing journaling', function () {
     $current = VersionedStorage::directory('reports', fn (FilesystemAdapter $files) => $files->put('old', 'original'));
     $executor = Mockery::mock(FilesystemOperationExecutor::class)->makePartial();

@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use SkyRaptor\LaravelVersionedStorage\ForkUpload;
 
-require dirname(__DIR__, 2).'/vendor/autoload.php';
+require __DIR__.'/autoload.php';
 
 $directory = $argv[1];
 $signal = isset($argv[2]) ? constant($argv[2]) : null;

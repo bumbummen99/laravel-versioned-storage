@@ -214,6 +214,44 @@ it('rejects nested resource roots in either registration order', function (bool 
         ->and(VersionedStorage::directory($rejected)->versions())->toBe([]);
 })->with([true, false]);
 
+it('allows sibling resource roots with a shared name prefix in either registration order', function (bool $shorterFirst) {
+    $firstPath = $shorterFirst ? 'reports' : 'reports-archive';
+    $secondPath = $shorterFirst ? 'reports-archive' : 'reports';
+    $first = VersionedStorage::put($firstPath, 'first contents');
+    $second = VersionedStorage::put($secondPath, 'second contents');
+
+    expect(VersionedStorage::get($firstPath, $first))->toBe('first contents')
+        ->and(VersionedStorage::get($secondPath, $second))->toBe('second contents');
+})->with([true, false]);
+
+it('can remove a legacy directory snapshot beside a similarly named registered resource', function () {
+    $version = (string) Str::uuid();
+    $siblingPath = "legacy/{$version}-archive";
+    $sibling = VersionedStorage::put($siblingPath, 'independent contents');
+    $resource = DB::table('versioned_storage_resources')->insertGetId([
+        'key' => hash('sha256', "local\0legacy\0directory"),
+        'disk' => 'local',
+        'path' => 'legacy',
+        'is_directory' => true,
+        'current_version' => $version,
+    ]);
+    DB::table('versioned_storage_versions')->insert([
+        'resource_id' => $resource,
+        'version' => $version,
+        'created_at' => now(),
+    ]);
+    Storage::disk('local')->put("legacy/{$version}/one", 'old contents');
+
+    $replacement = VersionedStorage::directory('legacy', function (FilesystemAdapter $files): void {
+        $files->put('one', 'replacement');
+    }, true);
+    VersionedStorage::directory('legacy')->cleanup();
+
+    expect(VersionedStorage::directory('legacy')->versions())->toBe([$replacement])
+        ->and(VersionedStorage::get($siblingPath, $sibling))->toBe('independent contents');
+    Storage::disk('local')->assertMissing("legacy/{$version}");
+});
+
 it('allows UUIDs in resource roots and arbitrary nested snapshot contents', function () {
     $path = 'accounts/3d596509-8191-4f2c-84d4-e3a8b1acfc39/reports';
     $version = VersionedStorage::directory($path, function (FilesystemAdapter $files): void {
@@ -259,7 +297,11 @@ it('refuses destructive cleanup of overlapping resources registered before the o
         $files->put('one', 'replacement');
     }, true);
     expect(fn () => VersionedStorage::directory('legacy')->cleanup())
-        ->toThrow(RuntimeException::class, 'contains registered resource');
+        ->toThrow(function (RuntimeException $exception) use ($parentVersion, $childPath): void {
+            expect($exception->getMessage())->toBe("Cannot remove version [{$parentVersion}]: it contains registered resource [{$childPath}].")
+                ->and($exception->getCode())->toBe(0)
+                ->and($exception->getPrevious())->toBeNull();
+        });
 
     expect(VersionedStorage::get($childPath, $child))->toBe('independent contents')
         ->and(VersionedStorage::directory('legacy')->get('one'))->toBe('replacement')

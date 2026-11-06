@@ -122,6 +122,11 @@ The command generates mutations across the package source configured in
 declarations. It is intentionally separate from `composer test`: mutation
 testing is substantially slower and requires a coverage driver.
 
+Runtime-guard workers use `tests/Support/autoload.php` to inherit Pest's
+source replacement during mutation runs. Their tests also exercise the
+supported entry point in the parent so Pest can select them from coverage.
+This does not collect coverage from independent child processes.
+
 For an optional targeted investigation, invoke Pest directly:
 
 ```bash

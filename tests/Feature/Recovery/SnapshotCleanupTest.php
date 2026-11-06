@@ -11,6 +11,18 @@ use League\Flysystem\UnableToDeleteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageHandler;
 
+it('retains the current snapshot even when its deletion flag was set incorrectly', function () {
+    $current = VersionedStorage::put('current-snapshot', 'current contents');
+    DB::table('versioned_storage_versions')->where('version', $current)->update(['pending_delete' => true]);
+
+    VersionedStorage::cleanup('current-snapshot');
+
+    expect(DB::table('versioned_storage_versions')->where('version', $current)->exists())->toBeTrue()
+        ->and(DB::table('versioned_storage_resources')->sole()->current_version)->toBe($current)
+        ->and(Storage::disk('local')->get("current-snapshot/{$current}"))->toBe('current contents');
+    Storage::disk('local')->assertExists("current-snapshot/{$current}");
+});
+
 it('refuses synchronous cleanup within either Laravel or raw PDO metadata transactions', function (bool $rawPdo) {
     $first = VersionedStorage::put('transaction-cleanup', 'original');
     $current = VersionedStorage::put('transaction-cleanup', 'replacement', cleanup: true);
