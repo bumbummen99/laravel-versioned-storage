@@ -6,8 +6,8 @@ use Illuminate\Support\Facades\Storage;
 use League\Flysystem\DirectoryListing;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemOperator;
-use SkyRaptor\LaravelVersionedStorage\ScopedFilesystemOperator;
-use SkyRaptor\LaravelVersionedStorage\UploadOperation;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\ScopedFilesystemOperator;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
 
 it('closes an unacknowledged stream and rejects subsequent execution with the original cause', function () {
     $stream = fopen('php://temp', 'w+b');

@@ -29,7 +29,7 @@ return new class extends Migration
             $table->boolean('pending_delete')->default(false);
         });
 
-        $schema->create('versioned_storage_disks', function (Blueprint $table): void {
+        $schema->create('versioned_storage_locks', function (Blueprint $table): void {
             $table->string('key', 64)->primary();
         });
 
@@ -62,7 +62,7 @@ return new class extends Migration
         $schema->dropIfExists('versioned_storage_operations');
         $schema->dropIfExists('versioned_storage_stages');
         $schema->dropIfExists('versioned_storage_reservations');
-        $schema->dropIfExists('versioned_storage_disks');
+        $schema->dropIfExists('versioned_storage_locks');
         $schema->dropIfExists('versioned_storage_versions');
         $schema->dropIfExists('versioned_storage_resources');
     }

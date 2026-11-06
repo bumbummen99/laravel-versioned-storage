@@ -12,6 +12,8 @@ use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use SkyRaptor\LaravelVersionedStorage\Console\Commands\CleanupVersionsCommand;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadContext;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 
 class VersionedStorageServiceProvider extends ServiceProvider
 {

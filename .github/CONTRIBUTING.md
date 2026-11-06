@@ -50,6 +50,21 @@ vendor/bin/pest tests/Specification/Storage/FileTest.php
 CI validates Ubuntu and macOS across the supported PHP/Laravel versions
 with lowest and stable dependency combinations.
 
+## Source Layout
+
+Keep consumer entry points (`VersionedStorage`, `VersionedStorageHandler`,
+`StagedVersion`) and the service provider at the source root. Group supporting
+classes by responsibility:
+
+| Directory | Responsibility |
+| --- | --- |
+| `src/Uploads` | Execution policy, forks, deadlines, operation lifecycle, and journals |
+| `src/Filesystem` | Scoped adapters/operators and snapshot deletion |
+| `src/Database` | Metadata transaction safety and recovery |
+| `src/Console/Commands` | Artisan commands |
+| `src/Facades` | Laravel facade |
+| `src/Testing` | Consumer testing helpers |
+
 ## Writing Tests
 
 Choose the category that matches the behavior:
@@ -132,7 +147,7 @@ This does not collect coverage from independent child processes.
 For an optional targeted investigation, invoke Pest directly:
 
 ```bash
-vendor/bin/pest --mutate --parallel --class='SkyRaptor\LaravelVersionedStorage\UploadOperation' --no-cache
+vendor/bin/pest --mutate --parallel --class='SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation' --no-cache
 ```
 
 The Composer command always uses `--everything`. Use direct Pest invocation

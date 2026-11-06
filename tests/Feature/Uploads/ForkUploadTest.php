@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\File;
-use SkyRaptor\LaravelVersionedStorage\ForkUpload;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
+use SkyRaptor\LaravelVersionedStorage\Uploads\ForkUpload;
 use Symfony\Component\Process\Process;
 
 describe('forked uploads', function () {

@@ -2,13 +2,14 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem;
 
 use DateTimeInterface;
 use Illuminate\Filesystem\FilesystemAdapter;
 use League\Flysystem\PathPrefixing\PathPrefixedAdapter;
 use League\Flysystem\WhitespacePathNormalizer;
 use RuntimeException;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
 
 class VersionedFilesystem extends FilesystemAdapter
 {

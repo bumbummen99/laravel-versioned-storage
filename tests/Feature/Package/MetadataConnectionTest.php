@@ -18,7 +18,7 @@ it('uses the configured metadata connection for migrations and operations', func
     $tables = [
         'versioned_storage_resources' => ['id', 'key', 'disk', 'path', 'is_directory', 'current_version'],
         'versioned_storage_versions' => ['id', 'resource_id', 'version', 'created_at', 'pending_delete'],
-        'versioned_storage_disks' => ['key'],
+        'versioned_storage_locks' => ['key'],
         'versioned_storage_reservations' => ['version'],
         'versioned_storage_stages' => ['id', 'resource_id', 'version', 'state', 'cleanup_after', 'failed'],
         'versioned_storage_operations' => ['id', 'version', 'operation', 'cleanup_after'],
@@ -31,7 +31,7 @@ it('uses the configured metadata connection for migrations and operations', func
         foreach ([
             ['versioned_storage_resources', ['key'], 'unique'],
             ['versioned_storage_versions', ['version'], 'unique'],
-            ['versioned_storage_disks', ['key'], 'primary'],
+            ['versioned_storage_locks', ['key'], 'primary'],
             ['versioned_storage_reservations', ['version'], 'primary'],
             ['versioned_storage_stages', ['version'], 'unique'],
             ['versioned_storage_stages', ['state'], null],

@@ -6,7 +6,7 @@ namespace SkyRaptor\LaravelVersionedStorage\Testing;
 
 use Illuminate\Contracts\Config\Repository;
 use RuntimeException;
-use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 
 final class SynchronousUploadExecution implements UploadExecutionPolicy
 {

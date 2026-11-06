@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage;
+namespace SkyRaptor\LaravelVersionedStorage\Uploads;
 
 use Illuminate\Support\Carbon;
 

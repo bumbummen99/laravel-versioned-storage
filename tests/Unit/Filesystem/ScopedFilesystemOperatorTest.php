@@ -7,7 +7,7 @@ use League\Flysystem\DirectoryListing;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\PathTraversalDetected;
-use SkyRaptor\LaravelVersionedStorage\ScopedFilesystemOperator;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\ScopedFilesystemOperator;
 
 afterEach(function (): void {
     Mockery::close();

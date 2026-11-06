@@ -9,7 +9,7 @@ use League\Flysystem\FilesystemAdapter as FlysystemAdapter;
 use League\Flysystem\PathTraversalDetected;
 use League\Flysystem\UnableToWriteFile;
 use PHPUnit\Framework\TestCase;
-use SkyRaptor\LaravelVersionedStorage\VersionedFilesystem;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\VersionedFilesystem;
 
 afterEach(function (): void {
     Mockery::close();

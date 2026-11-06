@@ -10,7 +10,7 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Jobs\SyncJob;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
-use SkyRaptor\LaravelVersionedStorage\UploadContext;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadContext;
 use Symfony\Component\Console\Input\ArgvInput;
 use Symfony\Component\Console\Output\NullOutput;
 use Symfony\Component\Process\Process;

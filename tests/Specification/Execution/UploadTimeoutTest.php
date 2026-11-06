@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
-use SkyRaptor\LaravelVersionedStorage\UploadContext;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadContext;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\NullOutput;

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem;
 
 use Closure;
 use Illuminate\Filesystem\FilesystemAdapter;

@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 use Illuminate\Filesystem\FilesystemAdapter;
-use SkyRaptor\LaravelVersionedStorage\SnapshotDeletion;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotDeletion;
 
 afterEach(function (): void {
     Mockery::close();

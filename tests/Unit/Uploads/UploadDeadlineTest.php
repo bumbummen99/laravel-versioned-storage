@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 use Illuminate\Support\Carbon;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestUploadClock;
-use SkyRaptor\LaravelVersionedStorage\UploadClock;
-use SkyRaptor\LaravelVersionedStorage\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadClock;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadDeadline;
 
 it('uses an injectable monotonic clock to reject an expired operation', function () {
     $clock = new TestUploadClock(Carbon::parse('2026-01-01 00:00:00'));

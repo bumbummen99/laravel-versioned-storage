@@ -17,8 +17,16 @@ use InvalidArgumentException;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use League\Flysystem\WhitespacePathNormalizer;
-use PDO;
 use RuntimeException;
+use SkyRaptor\LaravelVersionedStorage\Database\MetadataTransaction;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotDeletion;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\VersionedFilesystem;
+use SkyRaptor\LaravelVersionedStorage\Uploads\FilesystemOperationExecutor;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadClock;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadJournal;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
 use stdClass;
 use Throwable;
 
@@ -29,6 +37,8 @@ class VersionedStorageHandler
     private readonly string $key;
 
     private readonly Connection $database;
+
+    private readonly UploadJournal $journal;
 
     private readonly FilesystemAdapter $diskFilesystem;
 
@@ -46,6 +56,7 @@ class VersionedStorageHandler
 
         $this->key = hash('sha256', $disk."\0".$this->path."\0".($directory ? 'directory' : 'file'));
         $this->database = $connection ?? DB::connection(config('laravel-versioned-storage.connection'));
+        $this->journal = new UploadJournal($this->database, $this->key);
         $this->diskFilesystem = Storage::disk($disk);
     }
 
@@ -117,7 +128,7 @@ class VersionedStorageHandler
         $configuration = $this->uploadConfiguration();
         $version = $this->reserveDestination($execution, $configuration);
         $this->recordStage($version, $execution, $grace);
-        $operation = $this->createUploadOperation($version, $execution, $configuration, $grace);
+        $operation = $this->journal->operation($version, $execution, $configuration, $grace);
 
         try {
             $this->runSnapshotCallback($callback, $version, $operation);
@@ -185,59 +196,6 @@ class VersionedStorageHandler
         });
     }
 
-    /**
-     * @param  array{timeout: int, fork: bool}  $execution
-     * @param  array<string, mixed>  $configuration
-     */
-    private function createUploadOperation(string $version, array $execution, array $configuration, int $grace): UploadOperation
-    {
-        $pdo = null;
-
-        return new UploadOperation(
-            $execution,
-            $configuration,
-            function (string $id, string $name, UploadDeadline $deadline) use ($version, $grace, &$pdo): void {
-                $this->assertOutsideTransaction();
-                $this->transaction(function () use ($id, $name, $version, $deadline, $grace): void {
-                    $stage = $this->lockStage($version);
-
-                    if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
-                        throw new RuntimeException("Stage [{$version}] failed or was reclaimed before a filesystem operation.");
-                    }
-
-                    $cleanupAfter = $deadline->recoveryAfter($grace);
-                    $this->stageQuery($version)->update([
-                        'cleanup_after' => max($stage->cleanup_after, $cleanupAfter->toDateTimeString()),
-                    ]);
-
-                    if ($name !== '') {
-                        $this->connection()->table('versioned_storage_operations')->insert([
-                            'id' => $id, 'version' => $version, 'operation' => $name, 'cleanup_after' => $cleanupAfter,
-                        ]);
-                    }
-                });
-                $pdo = $this->connection()->getPdo();
-            },
-            function (string $id) use ($version, &$pdo): void {
-                if ($this->connection()->getRawPdo() !== $pdo) {
-                    throw new RuntimeException('The upload lost its metadata connection before operation completion.');
-                }
-                $this->assertOutsideTransaction();
-                $this->transaction(function () use ($id, $version): void {
-                    $stage = $this->lockStage($version);
-
-                    if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
-                        throw new RuntimeException("Stage [{$version}] failed or was reclaimed during a filesystem operation.");
-                    }
-
-                    if ($id !== '' && $this->connection()->table('versioned_storage_operations')->where('id', $id)->delete() !== 1) {
-                        throw new RuntimeException('The filesystem operation lost its durable journal.');
-                    }
-                });
-            },
-        );
-    }
-
     /** @param Closure(FilesystemAdapter, string): mixed $callback */
     private function runSnapshotCallback(Closure $callback, string $version, UploadOperation $operation): void
     {
@@ -259,13 +217,13 @@ class VersionedStorageHandler
     private function completeStage(string $version, bool $publish, bool $cleanup): void
     {
         $this->transaction(function () use ($version, $publish, $cleanup): void {
-            $stage = $this->lockStage($version);
+            $stage = $this->journal->lock($version);
 
             if ($stage === null || $stage->state !== 'uploading' || $stage->failed
                 || $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
                 throw new RuntimeException("Stage [{$version}] failed or was reclaimed before upload completion.");
             }
-            $this->stageQuery($version)->update(['state' => 'ready']);
+            $this->journal->query($version)->update(['state' => 'ready']);
 
             if ($publish) {
                 $this->publishStage($version, $cleanup);
@@ -278,10 +236,10 @@ class VersionedStorageHandler
         if (! $this->versionQuery()->where('version', $version)->exists()) {
             try {
                 $this->transaction(function () use ($version, $exception): void {
-                    $stage = $this->lockStage($version);
+                    $stage = $this->journal->lock($version);
 
                     if ($stage !== null && $stage->state === 'uploading') {
-                        $this->stageQuery($version)->update(['failed' => true]);
+                        $this->journal->query($version)->update(['failed' => true]);
 
                         if (! $this->connection()->table('versioned_storage_operations')->where('version', $version)->exists()) {
                             $this->removeVersion($version, $exception);
@@ -304,7 +262,7 @@ class VersionedStorageHandler
             throw new RuntimeException('CLI and development uploads require PCNTL and POSIX for supervised forks.');
         }
         foreach (DB::getConnections() as $connection) {
-            if ($connection->transactionLevel() > 0 || $this->hasPdoTransaction($connection)) {
+            if ($connection->transactionLevel() > 0 || MetadataTransaction::hasPdoTransaction($connection)) {
                 throw new RuntimeException('Forked uploads cannot inherit active database transactions. Stage first.');
             }
         }
@@ -312,9 +270,7 @@ class VersionedStorageHandler
 
     private function assertOutsideTransaction(): void
     {
-        if ($this->connection()->transactionLevel() > 0 || $this->hasPdoTransaction($this->connection())) {
-            throw new RuntimeException('Uploads cannot run inside a metadata transaction. Stage first, then publish inside the transaction.');
-        }
+        MetadataTransaction::assertOutsideTransaction($this->connection());
     }
 
     private function filesystem(string $version): FilesystemAdapter
@@ -329,12 +285,12 @@ class VersionedStorageHandler
     {
         $connection = $this->connection();
 
-        if ($connection->transactionLevel() === 0 && $this->hasPdoTransaction($connection)) {
+        if ($connection->transactionLevel() === 0 && MetadataTransaction::hasPdoTransaction($connection)) {
             throw new RuntimeException('Publish stages using Laravel-managed metadata transactions, not raw PDO transactions.');
         }
 
         $this->transaction(function () use ($connection, $version, $cleanup): void {
-            $stage = $this->lockStage($version);
+            $stage = $this->journal->lock($version);
 
             if ($stage === null) {
                 throw new RuntimeException("Stage [{$version}] does not exist or was discarded.");
@@ -365,13 +321,13 @@ class VersionedStorageHandler
             if ($cleanup) {
                 $this->resourceVersions($resource)->where('version', '!=', $version)->update(['pending_delete' => true]);
             }
-            $this->stageQuery($version)->update(['state' => 'published']);
+            $this->journal->query($version)->update(['state' => 'published']);
         }, 5);
     }
 
     public function cleanup(): void
     {
-        if ($this->connection()->transactionLevel() > 0 || $this->hasPdoTransaction($this->connection())) {
+        if ($this->connection()->transactionLevel() > 0 || MetadataTransaction::hasPdoTransaction($this->connection())) {
             throw new RuntimeException('Version cleanup cannot run inside an active metadata transaction.');
         }
 
@@ -413,7 +369,7 @@ class VersionedStorageHandler
     {
         $this->assertOutsideTransaction();
         $this->transaction(function () use ($version): void {
-            $stage = $this->lockStage($version);
+            $stage = $this->journal->lock($version);
 
             if ($stage === null) {
                 return;
@@ -426,10 +382,10 @@ class VersionedStorageHandler
             if ($stage->state === 'uploading' && $stage->cleanup_after > now()->toDateTimeString()) {
                 throw new RuntimeException("Incomplete stage [{$version}] must retain its journal until the cleanup deadline.");
             }
-            $this->stageQuery($version)->update(['state' => 'discarding', 'cleanup_after' => now()]);
+            $this->journal->query($version)->update(['state' => 'discarding', 'cleanup_after' => now()]);
         });
         $this->transaction(function () use ($version): void {
-            $stage = $this->lockStage($version);
+            $stage = $this->journal->lock($version);
 
             if ($stage === null) {
                 return;
@@ -440,7 +396,7 @@ class VersionedStorageHandler
             }
             $this->removeVersion($version);
             $this->connection()->table('versioned_storage_operations')->where('version', $version)->delete();
-            $this->stageQuery($version)->delete();
+            $this->journal->query($version)->delete();
         });
     }
 
@@ -457,7 +413,7 @@ class VersionedStorageHandler
             foreach ($stages as $candidate) {
                 $version = $candidate->version;
                 $this->transaction(function () use ($version): void {
-                    $stage = $this->lockStage($version, true);
+                    $stage = $this->journal->lock($version, true);
 
                     if ($stage === null || ! in_array($stage->state, ['uploading', 'discarding'], true)
                         || $stage->cleanup_after > now()->toDateTimeString()) {
@@ -470,28 +426,10 @@ class VersionedStorageHandler
                     }
                     $this->retainDiscard($version);
                     $this->connection()->table('versioned_storage_operations')->where('version', $version)->delete();
-                    $this->stageQuery($version)->delete();
+                    $this->journal->query($version)->delete();
                 });
             }
         });
-    }
-
-    private function stageQuery(string $version): Builder
-    {
-        return $this->connection()->table('versioned_storage_stages')->useWritePdo()->where('version', $version)
-            ->whereIn('resource_id', $this->connection()->table('versioned_storage_resources')->select('id')->where('key', $this->key));
-    }
-
-    private function lockStage(string $version, bool $skipLocked = false): ?stdClass
-    {
-        $query = $this->stageQuery($version);
-
-        if ($this->connection()->getDriverName() === 'sqlite') {
-            $query->update(['version' => $version]);
-        }
-
-        return $query->lock($skipLocked && in_array($this->connection()->getDriverName(), ['mysql', 'pgsql'], true)
-            ? 'for update skip locked' : true)->first();
     }
 
     public function retainDiscard(string $version): void
@@ -601,37 +539,7 @@ class VersionedStorageHandler
      */
     private function transaction(Closure $callback, int $attempts = 1): mixed
     {
-        $connection = $this->connection();
-        $initialLevel = $connection->transactionLevel();
-
-        try {
-            return $connection->transaction($callback, $attempts);
-        } catch (Throwable $exception) {
-            try {
-                // Beginning listeners can throw after the transaction or savepoint opens.
-                if ($connection->transactionLevel() > $initialLevel) {
-                    $connection->rollBack($initialLevel);
-                }
-
-                // Laravel can decrement its counter without rolling back a failed commit.
-                if ($connection->transactionLevel() === 0 && $this->hasPdoTransaction($connection)) {
-                    $connection->getPdo()->rollBack();
-                }
-            } catch (Throwable $recoveryException) {
-                report($exception);
-
-                throw $recoveryException;
-            }
-
-            throw $exception;
-        }
-    }
-
-    private function hasPdoTransaction(Connection $connection): bool
-    {
-        $pdo = $connection->getRawPdo();
-
-        return $pdo instanceof PDO && $pdo->inTransaction();
+        return MetadataTransaction::run($this->connection(), $callback, $attempts);
     }
 
     private function removeVersion(string $version, ?Throwable $previous = null): void
@@ -683,8 +591,8 @@ class VersionedStorageHandler
     {
         $connection = $this->connection();
         $key = hash('sha256', 'versioned-storage-resource-registration');
-        $connection->table('versioned_storage_disks')->insertOrIgnore(['key' => $key]);
-        $lock = $connection->table('versioned_storage_disks')->where('key', $key);
+        $connection->table('versioned_storage_locks')->insertOrIgnore(['key' => $key]);
+        $lock = $connection->table('versioned_storage_locks')->where('key', $key);
 
         if ($connection->getDriverName() === 'sqlite') {
             $lock->update(['key' => $key]);

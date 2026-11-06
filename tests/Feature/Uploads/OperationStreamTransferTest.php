@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\FilesystemOperator;
-use SkyRaptor\LaravelVersionedStorage\FilesystemOperationExecutor;
-use SkyRaptor\LaravelVersionedStorage\ForkUpload;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestUploadClock;
-use SkyRaptor\LaravelVersionedStorage\UploadClock;
-use SkyRaptor\LaravelVersionedStorage\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\Uploads\FilesystemOperationExecutor;
+use SkyRaptor\LaravelVersionedStorage\Uploads\ForkUpload;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadClock;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadDeadline;
 
 it('fails explicitly when the process cannot allocate a temporary read buffer', function () {
     $limits = posix_getrlimit();

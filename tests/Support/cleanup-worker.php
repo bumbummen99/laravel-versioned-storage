@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Orchestra\Testbench\Foundation\Application;
 use SkyRaptor\LaravelVersionedStorage\Testing\SynchronousUploadExecution;
-use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 

@@ -9,8 +9,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
-use SkyRaptor\LaravelVersionedStorage\UploadContext;
-use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadContext;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 

@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
-use SkyRaptor\LaravelVersionedStorage\SnapshotDeletion;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotDeletion;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use Symfony\Component\Process\Process;

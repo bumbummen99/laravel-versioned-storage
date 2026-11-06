@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SkyRaptor\LaravelVersionedStorage\Testing;
 
 use LogicException;
-use SkyRaptor\LaravelVersionedStorage\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 
 final class VersionedStorageTesting
 {

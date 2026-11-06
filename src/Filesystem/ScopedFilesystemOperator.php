@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem;
 
 use Closure;
 use DateTimeInterface;
@@ -11,6 +11,7 @@ use League\Flysystem\FilesystemOperator;
 use League\Flysystem\PathPrefixer;
 use League\Flysystem\StorageAttributes;
 use League\Flysystem\WhitespacePathNormalizer;
+use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
 
 class ScopedFilesystemOperator implements FilesystemOperator
 {
