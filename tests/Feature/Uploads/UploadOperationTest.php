@@ -3,7 +3,10 @@
 declare(strict_types=1);
 
 use Illuminate\Support\Facades\Storage;
+use League\Flysystem\DirectoryListing;
+use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemOperator;
+use SkyRaptor\LaravelVersionedStorage\ScopedFilesystemOperator;
 use SkyRaptor\LaravelVersionedStorage\UploadOperation;
 
 it('closes an unacknowledged stream and rejects subsequent execution with the original cause', function () {
@@ -128,3 +131,26 @@ it('rejects calls after closing before any lifecycle or filesystem work', functi
         : $operation->run($method, $callback, $filesystem))
         ->toThrow(RuntimeException::class, 'The snapshot callback has already finished.');
 })->with(['read', 'write', 'readStream']);
+
+it('consumes a supervised directory listing before acknowledging the operation', function () {
+    $visited = false;
+    $contents = (function () use (&$visited): Generator {
+        $visited = true;
+        yield new FileAttributes('reports/version/one', 8);
+    })();
+    $filesystem = Mockery::mock(FilesystemOperator::class);
+    $filesystem->shouldReceive('listContents')->once()->andReturn(new DirectoryListing($contents));
+    $operation = new UploadOperation(
+        execution: ['timeout' => 10, 'fork' => false],
+        configuration: [],
+        beginOperation: function (): void {},
+        acknowledgeOperation: function () use (&$visited): void {
+            expect($visited)->toBeTrue();
+        },
+    );
+    $scoped = new ScopedFilesystemOperator($filesystem, 'reports/version', $operation);
+
+    $listing = $scoped->listContents('');
+    expect($visited)->toBeTrue()
+        ->and($listing->toArray()[0]->path())->toBe('one');
+});

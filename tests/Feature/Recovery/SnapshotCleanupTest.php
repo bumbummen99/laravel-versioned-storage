@@ -9,6 +9,28 @@ use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
 use League\Flysystem\UnableToDeleteFile;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorageHandler;
+
+it('refuses synchronous cleanup within either Laravel or raw PDO metadata transactions', function (bool $rawPdo) {
+    $first = VersionedStorage::put('transaction-cleanup', 'original');
+    $current = VersionedStorage::put('transaction-cleanup', 'replacement', cleanup: true);
+    $connection = DB::connection();
+    $handler = new VersionedStorageHandler('transaction-cleanup', 'local', false);
+    $rawPdo ? $connection->getPdo()->beginTransaction() : $connection->beginTransaction();
+
+    try {
+        expect(fn () => $handler->cleanup())
+            ->toThrow(RuntimeException::class, 'Version cleanup cannot run inside an active metadata transaction.');
+        expect($connection->getPdo()->inTransaction())->toBeTrue()
+            ->and($connection->transactionLevel())->toBe($rawPdo ? 0 : 1);
+        Storage::disk('local')->assertExists(["transaction-cleanup/{$first}", "transaction-cleanup/{$current}"]);
+    } finally {
+        $rawPdo ? $connection->getPdo()->rollBack() : $connection->rollBack();
+    }
+
+    expect(VersionedStorage::versions('transaction-cleanup'))->toBe([$current])
+        ->and(DB::table('versioned_storage_versions')->where('version', $first)->exists())->toBeTrue();
+})->with(['Laravel' => false, 'PDO' => true]);
 
 it('removes only previous file versions from the database and filesystem', function () {
     Storage::disk('local')->put('foo/bar/baz/unrelated', 'leave alone');

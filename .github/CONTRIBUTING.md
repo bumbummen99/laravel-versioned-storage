@@ -108,6 +108,39 @@ Coverage includes PHP `max_execution_time`, FPM `request_terminate_timeout`,
 and Nginx `fastcgi_read_timeout`, including the distinction between an HTTP
 timeout and actual upload termination.
 
+### Mutation Testing
+
+Pest includes mutation testing. Enable PCOV or Xdebug 3 coverage mode, then
+run:
+
+```bash
+composer test:mutation
+```
+
+The command generates mutations across the package source configured in
+`phpunit.xml.dist`, including code without explicit `covers()` or `mutates()`
+declarations. It is intentionally separate from `composer test`: mutation
+testing is substantially slower and requires a coverage driver.
+
+For an optional targeted investigation, invoke Pest directly:
+
+```bash
+vendor/bin/pest --mutate --parallel --class='SkyRaptor\LaravelVersionedStorage\UploadOperation' --no-cache
+```
+
+The Composer command always uses `--everything`. Use direct Pest invocation
+for class selection because `--everything` overrides `--class`.
+
+With Xdebug, prefix the command with `XDEBUG_MODE=coverage`. Pest reports
+detected, surviving, and uncovered mutations. Review survivors for missing
+assertions or equivalent behavior; do not suppress them merely to improve
+the score. Use `--no-cache` for a fresh measurement. No minimum score is
+enforced by default; use `--min=80` to enforce a chosen threshold.
+
+Mutation testing does not replace real process tests or randomized stability
+runs. Coverage collected in the parent may not capture work in independent
+subprocesses.
+
 ## Benchmarks
 
 Compare the previous commit (`HEAD^`) with the current working tree:

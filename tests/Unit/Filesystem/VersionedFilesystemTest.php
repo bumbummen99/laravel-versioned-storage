@@ -46,6 +46,16 @@ it('prefixes reads and returns their contents', function () {
     expect($filesystem->get('summary.txt'))->toBe('contents');
 });
 
+it('passes the exact snapshot root to URL callbacks for empty paths and trailing prefixes', function (string $path) {
+    $adapter = Mockery::mock(FlysystemAdapter::class);
+    $original = new FilesystemAdapter(new Filesystem($adapter), $adapter);
+    $original->buildTemporaryUrlsUsing(fn (string $path) => 'https://example.test/'.$path);
+    $filesystem = new VersionedFilesystem($original, 'reports/version///');
+
+    expect($filesystem->temporaryUrl($path, new DateTimeImmutable('+1 hour')))
+        ->toBe('https://example.test/reports/version');
+})->with(['', '/', './']);
+
 it('rejects traversal before calling the underlying adapter', function () {
     $adapter = Mockery::mock(FlysystemAdapter::class);
     $adapter->shouldNotReceive('write');

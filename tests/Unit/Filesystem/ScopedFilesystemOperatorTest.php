@@ -70,6 +70,22 @@ it('returns directory listings relative to the snapshot', function () {
         ->and($listing[1]->fileSize())->toBe(8);
 });
 
+it('keeps an unsupervised listing lazy until the caller iterates it', function () {
+    $visited = false;
+    $contents = (function () use (&$visited): Generator {
+        $visited = true;
+        yield new FileAttributes('reports/version/one', 8);
+    })();
+    $operator = Mockery::mock(FilesystemOperator::class);
+    $operator->shouldReceive('listContents')->once()->andReturn(new DirectoryListing($contents));
+    $scoped = new ScopedFilesystemOperator($operator, 'reports/version');
+
+    $listing = $scoped->listContents('');
+    expect($visited)->toBeFalse();
+    expect($listing->toArray()[0]->path())->toBe('one');
+    expect($visited)->toBeTrue();
+});
+
 it('delegates temporary URL generation with its expiration and options', function () {
     $expiration = new DateTimeImmutable;
     $operator = Mockery::mock(FilesystemOperator::class);

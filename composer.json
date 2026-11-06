@@ -89,6 +89,10 @@
         "test:unit": [
             "vendor/bin/pest --parallel"
         ],
+        "test:mutation": [
+            "Composer\\Config::disableProcessTimeout",
+            "vendor/bin/pest --mutate --everything --parallel"
+        ],
         "test": [
             "@analyse",
             "@lint:check",

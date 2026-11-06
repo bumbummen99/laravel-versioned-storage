@@ -20,6 +20,14 @@ Prove package behavior with Pest 4/5, Orchestra Testbench, and the local `tests/
 4. Use `composer test:unit -- --filter ...` while iterating, `composer test:types` when type-sensitive tests or code changed, and `composer test` before finishing.
 5. Keep real package tests in the suite and remove only throwaway tests that were explicitly created for local scaffolding experiments.
 
+## Mutation Testing
+
+- `composer test:mutation` runs Pest's bundled mutation plugin in parallel over the whole package using `--everything` and the PHPUnit source scope, including classes without explicit mutation declarations. It is opt-in and not part of `composer test`.
+- Requires PCOV or Xdebug 3 with coverage enabled; use `XDEBUG_MODE=coverage` when using Xdebug.
+- Whole-package analysis is the default. For optional targeted investigations, invoke `vendor/bin/pest --mutate --parallel --class=...` directly. Do not add `--class` to the Composer command: Pest ignores class selection with `--everything`.
+- Use `--no-cache` to measure fresh results and `--min=...` only when intentionally enforcing a reviewed score. Do not claim a passing command proves all mutants were detected: inspect tested, surviving, and uncovered counts.
+- Investigate survivors rather than weakening assertions or adding blanket ignores. Parent-process coverage does not prove behavior executed in independent children.
+
 ## Test Organization
 
 - `tests/Specification/`: consumer-facing acceptance examples and public guarantees. Show how Laravel applications use the package, with concrete inputs and visible expected results. Include real process tests when termination or timeout behavior is part of the guarantee.

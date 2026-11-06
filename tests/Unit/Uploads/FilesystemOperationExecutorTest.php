@@ -43,3 +43,19 @@ it('returns the original stream for synchronous reads', function () {
         fclose($stream);
     }
 });
+
+it('dispatches synchronous stream reads without requesting a fork', function () {
+    $stream = fopen('php://temp', 'w+b');
+    $filesystem = Mockery::mock(FilesystemOperator::class);
+    $deadline = new UploadDeadline(60, false, new UploadClock);
+    $callback = fn (FilesystemOperator $operator) => $stream;
+    $executor = Mockery::mock(FilesystemOperationExecutor::class)->makePartial();
+    $executor->shouldReceive('execute')->once()->with($callback, $filesystem, [], $deadline, false)
+        ->andReturn($stream);
+
+    try {
+        expect($executor->readStream($callback, $filesystem, [], $deadline, false))->toBe($stream);
+    } finally {
+        fclose($stream);
+    }
+});
