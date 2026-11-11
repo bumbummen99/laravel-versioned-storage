@@ -5,8 +5,13 @@ declare(strict_types=1);
 namespace SkyRaptor\LaravelVersionedStorage\Testing;
 
 use LogicException;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Contracts\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Policies\SynchronousUploadExecution;
 
+/**
+ * Switches the current test application's execution-policy binding and restores runtime policy.
+ * Stateless; does not replace filesystem/metadata services or affect later application instances.
+ */
 final class VersionedStorageTesting
 {
     public static function runUploadsSynchronously(): void

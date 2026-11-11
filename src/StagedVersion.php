@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace SkyRaptor\LaravelVersionedStorage;
 
+/**
+ * Consumer handle to a staged UUID, delegating publication or discard to its captured handler.
+ * Keeps that handler's connection/adapter identity alive; does not cache durable stage state.
+ * Discard and publication retries are governed by metadata, not this object's lifetime.
+ */
 class StagedVersion
 {
     public function __construct(

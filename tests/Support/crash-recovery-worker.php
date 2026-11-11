@@ -11,9 +11,9 @@ use League\Flysystem\Config;
 use League\Flysystem\Filesystem;
 use League\Flysystem\Local\LocalFilesystemAdapter;
 use Orchestra\Testbench\Foundation\Application;
-use SkyRaptor\LaravelVersionedStorage\Testing\SynchronousUploadExecution;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Contracts\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Policies\SynchronousUploadExecution;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\ProcessWait;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 

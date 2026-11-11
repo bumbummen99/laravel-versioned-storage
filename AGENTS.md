@@ -2,13 +2,19 @@
 
 This repository is a Laravel package. Keep the package focused, idiomatic, and easy for Laravel developers to install, test, and maintain.
 
-## Package Conventions
+## Project Description
+Laravel Versioned Storage is a small package, that provides simple, non interfering write operations for one or many files on any supported filesystem driver.
 
-- Use Laravel-native package APIs and the existing service provider shape before adding abstractions.
-- Keep package names, namespaces, Composer metadata, publish tags, documentation, and examples aligned with `skyraptor/laravel-versioned-storage`.
-- Add only the files and dependencies needed for the package behavior being implemented.
-- Prefer explicit Laravel package code over helper abstractions unless the extension point is real.
-- Keep tests focused on observable package behavior through public APIs, service provider wiring, commands, routes, published resources, and documentation promises.
+It primarily handles the storage of files in a versioned manner, where writing the file or directory multiple times is a new version. This is very important when 
+write operations might be run from different processes, where writing to the same destination might interfere, even with locks, since the driver itself might stall, 
+creating a race condition. Versions and the reference to the current version are stored in the Database to provide a common storage between installations that
+can be changed transactionally.
+
+### File
+The parent directory of the file path contains version directories, which contain the file. So the file path `foo/bar/baz` becomes `foo/bar/baz/<version>`.
+
+### Directory
+The directory path contains version directories, which contain the files. So the file `baz` in the directory `foo/bar` becomes `foo/bar/<version>/baz`.
 
 ## Quick Commands
 
@@ -18,6 +24,30 @@ This repository is a Laravel package. Keep the package focused, idiomatic, and e
 - Pest tests: `composer test:unit`
 - Workbench build: `composer build`
 - Workbench server: `composer serve`
+
+## Local Skills
+
+- `package-bugfix`: use for supervised bug finding: reproduce one issue with a failing regression, stop for review, and fix it only after explicit approval. Reuse the specialized skills below as applicable.
+- `package-scaffold`: use when adding package capabilities or wiring them through the service provider, including commands, migrations, routes, config, views, translations, assets, middleware, publish tags, workbench files, and console-only behavior.
+- `package-testing`: use when adding or changing package tests with Pest 4/5 and Orchestra Testbench.
+- `package-release`: use when preparing changelog, release notes, tags, or GitHub release workflow changes.
+- `package-compatibility`: use when reviewing code, dependencies, or CI against the PHP and Laravel support matrix.
+- `package-generate-skill`: use when updating the bundled Boost skill from the package implementation, README, and examples.
+
+## Package Conventions
+
+- Use Laravel-native package APIs and the existing service provider shape before adding abstractions.
+- Keep package names, namespaces, Composer metadata, publish tags, documentation, and examples aligned with `skyraptor/laravel-versioned-storage`.
+- Add only the files and dependencies needed for the package behavior being implemented.
+- Prefer explicit Laravel package code over helper abstractions unless the extension point is real.
+- Keep tests focused on observable package behavior through public APIs, service provider wiring, commands, routes, published resources, and documentation promises.
+
+## Architecture and Lifecycle
+
+- Design components around cohesive responsibilities and explicit lifecycle boundaries, not merely conceptual grouping. Identify their states, transitions, invariants, and operation prerequisites before introducing or changing lifecycle-related abstractions.
+- Avoid partially initialized objects and implicit ordering requirements where practical. Make lifecycle prerequisites explicit through APIs, types, composition, or dedicated coordinators rather than scattering state checks and assumptions across methods.
+- Keep state transitions predictable and independently testable. Account for invalid transitions, failures, retries, recovery, and cleanup where applicable.
+- Prefer eliminating unnecessary states and simplifying transitions over introducing abstractions or design patterns solely to model them. The resulting architecture should be easy to understand, test, maintain, and represent in UML.
 
 ## Testing Guardrails
 
@@ -41,26 +71,3 @@ See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for contributor setup and test co
 - Reads and publication share resource locks; retirement must wait for protected readers. Cleanup workers perform filesystem deletion only, with verified successes reconciled by the parent. Keep primary-database reads and the final current-version/retirement checks.
 - Keep contributor documentation focused on practical usage. Put concise agent-specific pitfalls here, implementation rationale near the relevant code, and consumer behavior in the README and bundled Boost skill. Do not add refactor histories, transient test counts, or benchmark sample counts to this file.
 - Keep the README an onboarding guide, not an implementation reference. Retain human-facing safety constraints there; put detailed application integration instructions in the bundled Boost skill and maintainer workflows in local skills.
-
-## Local Skills
-
-- `package-bugfix`: use for supervised bug finding: reproduce one issue with a failing regression, stop for review, and fix it only after explicit approval. Reuse the specialized skills below as applicable.
-- `package-scaffold`: use when adding package capabilities or wiring them through the service provider, including commands, migrations, routes, config, views, translations, assets, middleware, publish tags, workbench files, and console-only behavior.
-- `package-testing`: use when adding or changing package tests with Pest 4/5 and Orchestra Testbench.
-- `package-release`: use when preparing changelog, release notes, tags, or GitHub release workflow changes.
-- `package-compatibility`: use when reviewing code, dependencies, or CI against the PHP and Laravel support matrix.
-- `package-generate-skill`: use when updating the bundled Boost skill from the package implementation, README, and examples.
-
-## Project Description
-Laravel Versioned Storage is a small package, that provides simple, non interfering write operations for one or many files on any supported filesystem driver.
-
-It primarily handles the storage of files in a versioned manner, where writing the file or directory multiple times is a new version. This is very important when 
-write operations might be run from different processes, where writing to the same destination might interfere, even with locks, since the driver itself might stall, 
-creating a race condition. Versions and the reference to the current version are stored in the Database to provide a common storage between installations that
-can be changed transactionally.
-
-### File
-The parent directory of the file path contains version directories, which contain the file. So the file path `foo/bar/baz` becomes `foo/bar/baz/<version>`.
-
-### Directory
-The directory path contains version directories, which contain the files. So the file `baz` in the directory `foo/bar` becomes `foo/bar/<version>/baz`.

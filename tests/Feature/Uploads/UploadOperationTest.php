@@ -6,8 +6,40 @@ use Illuminate\Support\Facades\Storage;
 use League\Flysystem\DirectoryListing;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\FilesystemOperator;
-use SkyRaptor\LaravelVersionedStorage\Filesystem\ScopedFilesystemOperator;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Adapters\ScopedFilesystemOperator;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadOperation;
+
+it('binds each acknowledgement to its own successfully begun operation', function () {
+    $events = [];
+    $filesystem = Storage::disk('local')->getDriver();
+    $operation = new UploadOperation(
+        execution: ['timeout' => 10, 'fork' => false],
+        configuration: [],
+        beginOperation: function (string $id, string $name, UploadDeadline $deadline) use (&$events): Closure {
+            expect($name)->toBe('write');
+            $events[] = ['begin', $id];
+
+            return function () use ($id, &$events): void {
+                $events[] = ['acknowledge', $id];
+            };
+        },
+    );
+
+    foreach (['first', 'second'] as $path) {
+        $operation->run('write', function (FilesystemOperator $files) use ($path, &$events): void {
+            $events[] = ['execute', $path];
+            $files->write($path, $path);
+        }, $filesystem);
+    }
+
+    expect(array_column($events, 0))->toBe(['begin', 'execute', 'acknowledge', 'begin', 'execute', 'acknowledge'])
+        ->and($events[0][1])->not->toBe($events[3][1])
+        ->and($events[2][1])->toBe($events[0][1])
+        ->and($events[5][1])->toBe($events[3][1])
+        ->and($filesystem->read('first'))->toBe('first')
+        ->and($filesystem->read('second'))->toBe('second');
+});
 
 it('closes an unacknowledged stream and rejects subsequent execution with the original cause', function () {
     $stream = fopen('php://temp', 'w+b');
@@ -16,13 +48,14 @@ it('closes an unacknowledged stream and rejects subsequent execution with the or
     $filesystem->shouldReceive('readStream')->once()->with('report')->andReturn($stream);
     $filesystem->shouldNotReceive('read');
     $lifecycle = Mockery::mock();
-    $lifecycle->shouldReceive('begin')->once();
+    $lifecycle->shouldReceive('begin')->once()->andReturn(function () use ($lifecycle): void {
+        $lifecycle->acknowledge('');
+    });
     $lifecycle->shouldReceive('acknowledge')->once()->with('')->andThrow($failure);
     $operation = new UploadOperation(
         execution: ['timeout' => 10, 'fork' => false],
         configuration: [],
         beginOperation: fn (...$arguments) => $lifecycle->begin(...$arguments),
-        acknowledgeOperation: fn (string $id) => $lifecycle->acknowledge($id),
     );
 
     try {
@@ -46,13 +79,14 @@ it('hands an acknowledged read stream to the caller without closing it', functio
     $filesystem = Storage::disk('local')->getDriver();
     $filesystem->write('report', 'contents');
     $lifecycle = Mockery::mock();
-    $lifecycle->shouldReceive('begin')->once();
+    $lifecycle->shouldReceive('begin')->once()->andReturn(function () use ($lifecycle): void {
+        $lifecycle->acknowledge('');
+    });
     $lifecycle->shouldReceive('acknowledge')->once()->with('');
     $operation = new UploadOperation(
         execution: ['timeout' => 10, 'fork' => false],
         configuration: [],
         beginOperation: fn (...$arguments) => $lifecycle->begin(...$arguments),
-        acknowledgeOperation: fn (string $id) => $lifecycle->acknowledge($id),
     );
     $stream = $operation->readStream(fn (FilesystemOperator $files) => $files->readStream('report'), $filesystem);
 
@@ -70,13 +104,14 @@ it('does not acknowledge a failed stream execution and marks the operation unhea
     $filesystem = Mockery::mock(FilesystemOperator::class);
     $filesystem->shouldReceive('readStream')->once()->with('report')->andThrow($failure);
     $lifecycle = Mockery::mock();
-    $lifecycle->shouldReceive('begin')->once();
+    $lifecycle->shouldReceive('begin')->once()->andReturn(function () use ($lifecycle): void {
+        $lifecycle->acknowledge('');
+    });
     $lifecycle->shouldNotReceive('acknowledge');
     $operation = new UploadOperation(
         execution: ['timeout' => 10, 'fork' => false],
         configuration: [],
         beginOperation: fn (...$arguments) => $lifecycle->begin(...$arguments),
-        acknowledgeOperation: fn (string $id) => $lifecycle->acknowledge($id),
     );
 
     expect(fn () => $operation->readStream(fn (FilesystemOperator $files) => $files->readStream('report'), $filesystem))
@@ -96,7 +131,6 @@ it('does not execute or acknowledge when beginning an operation fails', function
         execution: ['timeout' => 10, 'fork' => false],
         configuration: [],
         beginOperation: fn (...$arguments) => $lifecycle->begin(...$arguments),
-        acknowledgeOperation: fn (string $id) => $lifecycle->acknowledge($id),
     );
 
     expect(fn () => $operation->run('write', fn (FilesystemOperator $files) => $files->write('report', 'contents'), $filesystem))
@@ -116,7 +150,6 @@ it('rejects calls after closing before any lifecycle or filesystem work', functi
         execution: ['timeout' => 10, 'fork' => false],
         configuration: [],
         beginOperation: fn (...$arguments) => $lifecycle->begin(...$arguments),
-        acknowledgeOperation: fn (string $id) => $lifecycle->acknowledge($id),
     );
     $operation->close();
 
@@ -143,9 +176,10 @@ it('consumes a supervised directory listing before acknowledging the operation',
     $operation = new UploadOperation(
         execution: ['timeout' => 10, 'fork' => false],
         configuration: [],
-        beginOperation: function (): void {},
-        acknowledgeOperation: function () use (&$visited): void {
-            expect($visited)->toBeTrue();
+        beginOperation: function () use (&$visited): Closure {
+            return function () use (&$visited): void {
+                expect($visited)->toBeTrue();
+            };
         },
     );
     $scoped = new ScopedFilesystemOperator($filesystem, 'reports/version', $operation);

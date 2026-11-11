@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Uploads;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution;
 
 use Closure;
 use Illuminate\Support\Str;
@@ -10,6 +10,16 @@ use League\Flysystem\FilesystemOperator;
 use RuntimeException;
 use Throwable;
 
+/**
+ * One callback's operation lifecycle and health, created by UploadStages through UploadJournal.
+ * Each call: 1. Check health. 2. Establish a fresh deadline. 3. Commit journal intent.
+ * 4. Execute the filesystem operation. 5. Acknowledge it. 6. Return the result.
+ *
+ * Sequential calls share callback health, not deadlines. Failure is sticky even if caught by
+ * application code. Closing permanently rejects further calls; outstanding journals survive.
+ * Starting each operation returns its bound acknowledgement, invoked only after successful IO.
+ * Only the executor's filesystem work runs in children, never journal callbacks.
+ */
 final class UploadOperation
 {
     private ?Throwable $failure = null;
@@ -19,14 +29,12 @@ final class UploadOperation
     /**
      * @param  array{timeout: int, fork: bool}  $execution
      * @param  array<string, mixed>  $configuration
-     * @param  Closure(string, string, UploadDeadline): void  $beginOperation
-     * @param  Closure(string): void  $acknowledgeOperation
+     * @param  Closure(string, string, UploadDeadline): (Closure(): void)  $beginOperation
      */
     public function __construct(
         private readonly array $execution,
         private readonly array $configuration,
         private readonly Closure $beginOperation,
-        private readonly Closure $acknowledgeOperation,
     ) {}
 
     public function assertHealthy(): void
@@ -76,11 +84,11 @@ final class UploadOperation
 
         try {
             // Read operations also lock/check the stage, but do not leave mutation journals.
-            ($this->beginOperation)($id, $mutation ? $operation : '', $deadline);
+            $acknowledge = ($this->beginOperation)($id, $mutation ? $operation : '', $deadline);
             $result = $execute(app(FilesystemOperationExecutor::class), $deadline);
 
             try {
-                ($this->acknowledgeOperation)($mutation ? $id : '');
+                $acknowledge();
             } catch (Throwable $exception) {
                 if ($cleanupOnAcknowledgmentFailure !== null) {
                     $cleanupOnAcknowledgmentFailure($result);

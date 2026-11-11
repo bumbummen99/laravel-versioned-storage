@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use SkyRaptor\LaravelVersionedStorage\Uploads\ForkUpload;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\ForkUpload;
 
 require __DIR__.'/autoload.php';
 

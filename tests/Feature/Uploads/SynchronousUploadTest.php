@@ -7,10 +7,10 @@ use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Contracts\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Policies\UploadContext;
 use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadContext;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorageServiceProvider;
 

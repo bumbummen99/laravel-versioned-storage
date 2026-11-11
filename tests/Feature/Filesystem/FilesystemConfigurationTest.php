@@ -9,7 +9,7 @@ use League\Flysystem\Config;
 use League\Flysystem\FilesystemAdapter as FlysystemAdapter;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\UnableToWriteFile;
-use SkyRaptor\LaravelVersionedStorage\Filesystem\VersionedFilesystem;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Adapters\VersionedFilesystem;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 it('preserves write restrictions enforced by the selected filesystem operator', function (bool $directory) {

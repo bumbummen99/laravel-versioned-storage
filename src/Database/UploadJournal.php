@@ -2,20 +2,29 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Uploads;
+namespace SkyRaptor\LaravelVersionedStorage\Database;
 
+use Closure;
 use Illuminate\Database\Connection;
-use Illuminate\Database\Query\Builder;
 use PDO;
 use RuntimeException;
-use SkyRaptor\LaravelVersionedStorage\Database\MetadataTransaction;
-use stdClass;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadOperation;
 
+/**
+ * Persists filesystem-operation intent and acknowledgement in the parent process.
+ * 1. Lock/check stage and extend its deadline. 2. Commit mutation intent before execution.
+ * 3. Verify PDO identity and remove the intent only after successful execution.
+ *
+ * Handler-scoped and shared, but each successful begin supplies an operation-local acknowledgement
+ * capturing its established PDO. No nullable connection tracker is shared between callbacks.
+ * ResourceMetadata owns queries/locks; UploadOperation owns execution order and callback health.
+ */
 final class UploadJournal
 {
     public function __construct(
         private readonly Connection $connection,
-        private readonly string $resourceKey,
+        private readonly ResourceMetadata $metadata,
     ) {}
 
     /**
@@ -24,16 +33,16 @@ final class UploadJournal
      */
     public function operation(string $version, array $execution, array $configuration, int $grace): UploadOperation
     {
-        $pdo = null;
-
         return new UploadOperation(
             $execution,
             $configuration,
-            function (string $id, string $name, UploadDeadline $deadline) use ($version, $grace, &$pdo): void {
+            /** @return Closure(): void */
+            function (string $id, string $name, UploadDeadline $deadline) use ($version, $grace): Closure {
                 $pdo = $this->begin($version, $id, $name, $deadline, $grace);
-            },
-            function (string $id) use ($version, &$pdo): void {
-                $this->acknowledge($version, $id, $pdo);
+
+                return function () use ($version, $id, $name, $pdo): void {
+                    $this->acknowledge($version, $name !== '' ? $id : '', $pdo);
+                };
             },
         );
     }
@@ -42,14 +51,14 @@ final class UploadJournal
     {
         MetadataTransaction::assertOutsideTransaction($this->connection);
         MetadataTransaction::run($this->connection, function () use ($id, $name, $version, $deadline, $grace): void {
-            $stage = $this->lock($version);
+            $stage = $this->metadata->lockStage($version);
 
             if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
                 throw new RuntimeException("Stage [{$version}] failed or was reclaimed before a filesystem operation.");
             }
 
             $cleanupAfter = $deadline->recoveryAfter($grace);
-            $this->query($version)->update([
+            $this->metadata->stage($version)->update([
                 'cleanup_after' => max($stage->cleanup_after, $cleanupAfter->toDateTimeString()),
             ]);
 
@@ -63,14 +72,14 @@ final class UploadJournal
         return $this->connection->getPdo();
     }
 
-    private function acknowledge(string $version, string $id, ?PDO $pdo): void
+    private function acknowledge(string $version, string $id, PDO $pdo): void
     {
         if ($this->connection->getRawPdo() !== $pdo) {
             throw new RuntimeException('The upload lost its metadata connection before operation completion.');
         }
         MetadataTransaction::assertOutsideTransaction($this->connection);
         MetadataTransaction::run($this->connection, function () use ($id, $version): void {
-            $stage = $this->lock($version);
+            $stage = $this->metadata->lockStage($version);
 
             if ($stage === null || $stage->state !== 'uploading' || $stage->failed) {
                 throw new RuntimeException("Stage [{$version}] failed or was reclaimed during a filesystem operation.");
@@ -80,23 +89,5 @@ final class UploadJournal
                 throw new RuntimeException('The filesystem operation lost its durable journal.');
             }
         });
-    }
-
-    public function query(string $version): Builder
-    {
-        return $this->connection->table('versioned_storage_stages')->useWritePdo()->where('version', $version)
-            ->whereIn('resource_id', $this->connection->table('versioned_storage_resources')->select('id')->where('key', $this->resourceKey));
-    }
-
-    public function lock(string $version, bool $skipLocked = false): ?stdClass
-    {
-        $query = $this->query($version);
-
-        if ($this->connection->getDriverName() === 'sqlite') {
-            $query->update(['version' => $version]);
-        }
-
-        return $query->lock($skipLocked && in_array($this->connection->getDriverName(), ['mysql', 'pgsql'], true)
-            ? 'for update skip locked' : true)->first();
     }
 }

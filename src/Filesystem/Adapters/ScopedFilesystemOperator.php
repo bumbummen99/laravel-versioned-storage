@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Filesystem;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Adapters;
 
 use Closure;
 use DateTimeInterface;
@@ -11,8 +11,13 @@ use League\Flysystem\FilesystemOperator;
 use League\Flysystem\PathPrefixer;
 use League\Flysystem\StorageAttributes;
 use League\Flysystem\WhitespacePathNormalizer;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadOperation;
 
+/**
+ * Flysystem boundary: normalize/prefix paths and route callback IO through UploadOperation.
+ * One instance per snapshot view. Read-only views have no upload operation.
+ * Eagerly consumes supervised listings so iteration cannot escape acknowledgement/deadline scope.
+ */
 class ScopedFilesystemOperator implements FilesystemOperator
 {
     private readonly PathPrefixer $prefixer;

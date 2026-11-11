@@ -2,15 +2,20 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Filesystem;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Adapters;
 
 use DateTimeInterface;
 use Illuminate\Filesystem\FilesystemAdapter;
 use League\Flysystem\PathPrefixing\PathPrefixedAdapter;
 use League\Flysystem\WhitespacePathNormalizer;
 use RuntimeException;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadOperation;
 
+/**
+ * Laravel filesystem view of one snapshot, including scoped paths and URLs.
+ * Created per read or callback; callback views carry that callback's UploadOperation.
+ * Retaining a callback view does not extend its lifetime: closed operations reject further IO.
+ */
 class VersionedFilesystem extends FilesystemAdapter
 {
     public function __construct(

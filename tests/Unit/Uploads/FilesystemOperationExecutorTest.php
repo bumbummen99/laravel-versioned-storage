@@ -3,9 +3,9 @@
 declare(strict_types=1);
 
 use League\Flysystem\FilesystemOperator;
-use SkyRaptor\LaravelVersionedStorage\Uploads\FilesystemOperationExecutor;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadClock;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadDeadline;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\FilesystemOperationExecutor;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadClock;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadDeadline;
 
 afterEach(function (): void {
     Mockery::close();

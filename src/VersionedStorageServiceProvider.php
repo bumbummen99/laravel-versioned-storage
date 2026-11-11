@@ -12,9 +12,14 @@ use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 use SkyRaptor\LaravelVersionedStorage\Console\Commands\CleanupVersionsCommand;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadContext;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Contracts\UploadExecutionPolicy;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Policies\UploadContext;
 
+/**
+ * Laravel integration: register config/runtime context, connect queue events, and expose console assets.
+ * Application-scoped; only UploadContext tracks runtime state. Resource workflows are constructed
+ * by handlers, not registered as application singletons.
+ */
 class VersionedStorageServiceProvider extends ServiceProvider
 {
     /**

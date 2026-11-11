@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Uploads;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Policies;
 
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
@@ -12,7 +12,14 @@ use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Jobs\SyncJob;
 use RuntimeException;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Contracts\UploadExecutionPolicy;
 
+/**
+ * Resolves execution policy from the current runtime and nested queue worker/job contexts.
+ * Application singleton: events push/pop contexts; execution() reads the current context,
+ * validates its effective timeout, and chooses externally enforced or forked operations.
+ * Stores no resource, adapter, journal, or upload-operation state.
+ */
 class UploadContext implements UploadExecutionPolicy
 {
     /** @var list<array{command: string, timeout: int, once: bool}> */

@@ -9,10 +9,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\FilesystemOperator;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\FilesystemOperationExecutor;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadClock;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadDeadline;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestUploadClock;
-use SkyRaptor\LaravelVersionedStorage\Uploads\FilesystemOperationExecutor;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadClock;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadDeadline;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 it('closes the callback filesystem after a callback failure without an uncertain operation', function () {

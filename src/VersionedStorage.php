@@ -12,6 +12,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use RuntimeException;
 
+/**
+ * Consumer entry points: select a resource handler, adapt input, and delegate lifecycle workflows.
+ * No resource or stage state is cached here; staged() reconstructs a handle from primary metadata.
+ * File inputs are opened in the parent callback and always closed after writing.
+ */
 class VersionedStorage
 {
     public static function put(string $path, mixed $contents, bool $cleanup = false, ?string $disk = null): string

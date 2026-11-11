@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Uploads;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution;
 
 use Closure;
 use Illuminate\Support\Facades\Storage;
@@ -10,6 +10,13 @@ use League\Flysystem\FilesystemOperator;
 use RuntimeException;
 use Throwable;
 
+/**
+ * Executes one filesystem operation: 1. Check its fixed deadline. 2. Run inline or supervise
+ * a fork which rebuilds the disk from captured configuration. 3. Return its result or throw.
+ *
+ * Stateless, resolved per operation. Does not own journals, publication, or upload callbacks.
+ * Forked read streams are copied to a temporary buffer and rewound for the parent caller.
+ */
 class FilesystemOperationExecutor
 {
     /**

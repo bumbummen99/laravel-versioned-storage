@@ -7,6 +7,8 @@ namespace SkyRaptor\LaravelVersionedStorage\Facades;
 use Illuminate\Support\Facades\Facade;
 
 /**
+ * Laravel facade forwarding to consumer entry points; owns no resource lifecycle state.
+ *
  * @see \SkyRaptor\LaravelVersionedStorage\VersionedStorage
  */
 class VersionedStorage extends Facade

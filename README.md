@@ -30,6 +30,10 @@ configuration is optional and uses `laravel-versioned-storage-config`.
 
 ## Usage
 
+**Start with the [application workflows and guarantees](docs/workflows.md)** for
+the complete write/read/replace/stage/discard/cleanup lifecycle. You do not need
+to understand the internal components to use the package.
+
 ### Files
 
 ```php
@@ -98,6 +102,26 @@ and failed deletions; it returns a failure exit code if any operation fails.
 `--chunk=20` changes the default concurrency batch size of 10.
 For synchronous, resource-specific cleanup, use `VersionedStorage::cleanup($path)`
 or `$directory->cleanup()`.
+
+Cleanup is not resource deletion: it preserves current versions, readable
+history not explicitly retired, and completed unpublished stages.
+
+### Deletion and discard
+
+Discard a completed upload that you have not published:
+
+```php
+$stage = VersionedStorage::stage('reports/daily.csv', 'not needed');
+$stage->discard();
+```
+
+Published snapshots cannot be discarded. To remove a child from a directory,
+publish a replacement containing only the files you want to keep. To remove
+older published history, publish with `cleanup: true` and run cleanup.
+
+There is currently **no supported consumer API to delete the current file/folder
+resource or one arbitrary published version**. Do not delete version paths or
+package metadata manually. See [deletion workflows and limitations](docs/workflows.md#4-delete-be-explicit-about-what-you-mean).
 
 ### Transactions
 
@@ -188,6 +212,8 @@ does **not** enforce hard timeouts; keep real-process timeout tests separate.
 
 ## More
 
+- [Application workflows, lifecycle, and guarantees](docs/workflows.md)
+- [Implementation architecture and UML diagrams](docs/architecture.md)
 - [Contributing and package tests](.github/CONTRIBUTING.md)
 - [Changelog](CHANGELOG.md)
 - [Report a vulnerability](.github/SECURITY.md)

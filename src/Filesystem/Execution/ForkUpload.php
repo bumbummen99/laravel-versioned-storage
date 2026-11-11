@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Uploads;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution;
 
 use Closure;
 use InvalidArgumentException;
@@ -11,6 +11,13 @@ use Spatie\Fork\Exceptions\CouldNotManageTask;
 use Spatie\Fork\Fork;
 use Throwable;
 
+/**
+ * Supervises one child task: 1. Validate runtime/limit. 2. Arm the child OS alarm.
+ * 3. Await a complete result. 4. Restore parent signal state on every exit path.
+ *
+ * Stateless across invocations. Despite its name, runs individual filesystem operations,
+ * not the whole upload callback. Timeout/abnormal exit throws instead of returning success.
+ */
 class ForkUpload
 {
     /**

@@ -62,17 +62,36 @@ with lowest and stable dependency combinations.
 ## Source Layout
 
 Keep consumer entry points (`VersionedStorage`, `VersionedStorageHandler`,
-`StagedVersion`) and the service provider at the source root. Group supporting
-classes by responsibility:
+`StagedVersion`), shared `ResourceIdentity`, and the service provider at the source
+root. Group supporting classes by responsibility and genuine implementation family:
 
-| Directory | Responsibility |
+| Directory | Responsibility and reason |
 | --- | --- |
-| `src/Uploads` | Execution policy, forks, deadlines, operation lifecycle, and journals |
-| `src/Filesystem` | Scoped adapters/operators and snapshot deletion |
-| `src/Database` | Metadata transaction safety and recovery |
-| `src/Console/Commands` | Artisan commands |
-| `src/Facades` | Laravel facade |
-| `src/Testing` | Consumer testing helpers |
+| `src/Actions` | Business decisions and ordered steps for writing, reading, publication, registration, recovery, and cleanup |
+| `src/Database` | Metadata queries, locks, transaction recovery, and operation journals that coordinate processes and survive crashes |
+| `src/Filesystem` | Snapshot view construction, filesystem ownership, and verified physical deletion |
+| `src/Filesystem/Adapters` | Laravel and Flysystem wrappers that scope snapshot paths and route callback operations |
+| `src/Filesystem/Execution` | Filesystem-operation coordination, deadlines, execution, and process supervision; never the entire upload callback or database work |
+| `src/Filesystem/Execution/Contracts` | The execution-policy replacement boundary owned by filesystem execution |
+| `src/Filesystem/Execution/Policies` | Runtime-context and synchronous-testing implementations of the execution-policy contract |
+| `src/Console/Commands` | Laravel command input, reporting, and exit status; delegate business work to actions |
+| `src/Facades` | Laravel facade exposing the consumer API |
+| `src/Testing` | Application testing helpers that switch execution policy while preserving real metadata/filesystem behavior |
+
+Read [Implementation architecture](../docs/architecture.md) for the three resource
+workflows, UML diagrams, transaction boundaries, and object lifetimes.
+Use named methods for ordinary workflow steps; extract a class only for a
+cohesive mechanism with its own contract. Test those mechanisms directly and
+validate workflows through public APIs and the existing process tests. Keep
+guards and atomic updates together; method boundaries do not imply commits.
+Keep business decisions in actions, not filesystem executors or journals.
+Lifecycle describes a class's steps, lifetime, and failure handling, not a
+directory hierarchy. Tests retain their purpose-based groups independently of
+the production namespaces.
+
+Keep contracts with the subsystem they govern and group interchangeable
+implementations together. Adapters reuse Laravel/Flysystem contracts; do not add
+an interface for every class or a directory for each supporting mechanism.
 
 ## Writing Tests
 
@@ -156,7 +175,7 @@ This does not collect coverage from independent child processes.
 For an optional targeted investigation, invoke Pest directly:
 
 ```bash
-vendor/bin/pest --mutate --parallel --class='SkyRaptor\LaravelVersionedStorage\Uploads\UploadOperation' --no-cache
+vendor/bin/pest --mutate --parallel --class='SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadOperation' --no-cache
 ```
 
 The Composer command always uses `--everything`. Use direct Pest invocation

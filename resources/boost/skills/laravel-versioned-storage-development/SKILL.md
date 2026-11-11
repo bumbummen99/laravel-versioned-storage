@@ -45,6 +45,11 @@ Set `cleanup_grace` (default 10800 seconds) longer than the maximum accepted rem
 
 Use `SkyRaptor\LaravelVersionedStorage\VersionedStorage` or `SkyRaptor\LaravelVersionedStorage\Facades\VersionedStorage`.
 
+Explain the consumer model before implementation details: each write builds a
+new hidden snapshot; publication makes it readable and selects it as current.
+Older published versions remain readable by default. `cleanup: true` retires
+them at publication; cleanup physically deletes them later.
+
 - `put($path, $contents, $cleanup = false, $disk = null)` returns a version string.
 - `stage($path, $contents, $disk = null)` and `stageDirectory($path, $callback, $disk = null)` return a completed, unpublished stage with a `version` UUID.
 - `$stage->publish($cleanup = false)` publishes that stage, optionally inside an application transaction. `$stage->discard()` removes an unpublished stage outside transactions.
@@ -57,6 +62,13 @@ Use `SkyRaptor\LaravelVersionedStorage\VersionedStorage` or `SkyRaptor\LaravelVe
 - `directory($path)` returns a handler with `get($file, $version = null)`, `exists($file, $version = null)`, `versions()`, and `cleanup()`.
 
 The directory callback receives a scoped Laravel `FilesystemAdapter`. All files in the new snapshot must be written by that callback; previous files are not copied.
+
+To remove a child, publish a replacement folder snapshot without it. Use
+`$stage->discard()` only for unpublished snapshots. There is no supported
+consumer API to delete the current resource or retire an arbitrary published
+UUID; do not invent `delete()` examples, mutate package tables, or suggest
+deleting physical paths.
+Cleanup preserves current versions, non-retired history, and completed stages.
 
 Filesystem operations inside the callback get fresh child timeouts where fork supervision applies, including reads and listing enumeration. Forked `readStream()` buffers the complete remote read into a temporary local stream; listings are materialized. Allow temporary disk space. Mutations (write/stream, mkdir, copy/move, delete, visibility) additionally commit a journal before execution. Any operation failure poisons the whole stage even when caught by the callback; further operations and publication fail. Do not retain the callback filesystem for later use or bypass it through raw adapters. FPM/daemon timeouts still bound the whole request/job, not each operation.
 
@@ -104,6 +116,8 @@ Snapshot operations preserve restrictions implemented by the selected disk's Fly
 - Optional config tag: `laravel-versioned-storage-config`.
 - Combined config and migrations tag: `laravel-versioned-storage`. Run `php artisan migrate` after publishing.
 - See the package README for cleanup and failure semantics.
+- See [application workflows and guarantees](../../../../docs/workflows.md) for
+  task-oriented lifecycles and deletion limitations.
 
 ## Examples
 
@@ -130,4 +144,5 @@ Use `DatabaseMigrations` or another setup without an enclosing metadata transact
 - Do not assume completed stages expire: explicitly publish or discard them. Do not treat database-session loss during an ongoing remote upload as safely fenced.
 - Do not swallow callback/write failures: incomplete versions must not become current.
 - Do not depend on private metadata schema or mutate published snapshots directly.
+- Do not describe cleanup as resource deletion or as an automatic retention policy.
 - Do not mix resources' UUID versions in one physical container, including through different disks or file/directory APIs.

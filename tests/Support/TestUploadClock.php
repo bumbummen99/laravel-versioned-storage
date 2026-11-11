@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SkyRaptor\LaravelVersionedStorage\Tests\Support;
 
 use Illuminate\Support\Carbon;
-use SkyRaptor\LaravelVersionedStorage\Uploads\UploadClock;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadClock;
 
 final class TestUploadClock extends UploadClock
 {

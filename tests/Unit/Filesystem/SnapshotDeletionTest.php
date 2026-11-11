@@ -9,7 +9,7 @@ afterEach(function (): void {
     Mockery::close();
 });
 
-it('preserves the original failure when a snapshot cannot be removed', function (bool $deleted, bool $remains) {
+it('preserves the original failure when physical snapshot deletion is refused or incomplete', function (bool $deleted, bool $remains) {
     $previous = new RuntimeException('publication failed');
     $filesystem = Mockery::mock(FilesystemAdapter::class);
     $filesystem->shouldReceive('delete')->once()->with('report/version')->andReturn($deleted);
@@ -18,7 +18,7 @@ it('preserves the original failure when a snapshot cannot be removed', function 
         $filesystem->shouldReceive('exists')->once()->with('report/version')->andReturn($remains);
     }
 
-    expect(fn () => SnapshotDeletion::delete($filesystem, 'report/version', false, $previous))
+    expect(fn () => SnapshotDeletion::remove($filesystem, 'report/version', false, $previous))
         ->toThrow(function (RuntimeException $exception) use ($previous): void {
             expect($exception->getMessage())->toBe('Unable to remove version snapshot [report/version].')
                 ->and($exception->getCode())->toBe(0)

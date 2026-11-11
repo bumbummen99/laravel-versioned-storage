@@ -10,6 +10,13 @@ use PDO;
 use RuntimeException;
 use Throwable;
 
+/**
+ * Runs a metadata transaction: 1. Record entry depth. 2. Execute with requested retries.
+ * 3. On failure, restore transaction/PDO state without rolling back unrelated caller work.
+ *
+ * Stateless. The calling lifecycle action determines its boundary and lock order.
+ * Recovery failure reports the original exception and replaces it with the recovery exception.
+ */
 final class MetadataTransaction
 {
     /**

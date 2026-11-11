@@ -2,11 +2,16 @@
 
 declare(strict_types=1);
 
-namespace SkyRaptor\LaravelVersionedStorage\Uploads;
+namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution;
 
 use Illuminate\Support\Carbon;
 use RuntimeException;
 
+/**
+ * Fixed deadline of one filesystem operation, capturing wall and monotonic time at construction.
+ * Never renewed by journal persistence or fork startup. Recovery timestamps add grace, whole-second
+ * rounding, and the fork alarm margin; extending a stage must not reset an operation's deadline.
+ */
 final class UploadDeadline
 {
     private const int NANOSECONDS_PER_SECOND = 1_000_000_000;

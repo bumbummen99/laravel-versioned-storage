@@ -9,9 +9,9 @@ use Illuminate\Support\Facades\Concurrency;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
-use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotDeletion;
 use SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\VersionedStorageHandler;
 use Symfony\Component\Process\Process;
 
 it('runs real process workers concurrently and reconciles their results in the parent command', function () {
@@ -114,8 +114,7 @@ it('reports worker disk configuration mismatches instead of deleting from a diff
     $disk = Storage::disk('local');
     $other = Storage::fake('other');
     $other->put("reports/{$first}", 'unrelated');
-    $task = SnapshotDeletion::task('local', "reports/{$first}", $first, false,
-        hash('sha256', json_encode($disk->getConfig(), JSON_THROW_ON_ERROR)));
+    $task = (new VersionedStorageHandler('reports', 'local', false))->deletionTask($first);
     Storage::set('local', $other);
 
     $result = $task();
