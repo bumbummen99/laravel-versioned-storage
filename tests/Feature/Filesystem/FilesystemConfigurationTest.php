@@ -10,9 +10,10 @@ use League\Flysystem\FilesystemAdapter as FlysystemAdapter;
 use League\Flysystem\FilesystemOperator;
 use League\Flysystem\UnableToWriteFile;
 use SkyRaptor\LaravelVersionedStorage\Filesystem\Adapters\VersionedFilesystem;
-use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotFilesystem;
+use SkyRaptor\LaravelVersionedStorage\ResourceIdentity;
 
-it('preserves write restrictions enforced by the selected filesystem operator', function (bool $directory) {
+it('preserves write restrictions enforced by the selected filesystem operator', function (bool $directory, string $filename) {
     $disk = Storage::disk('local');
     $operator = Mockery::mock($disk->getDriver())->makePartial();
     $operator->shouldReceive('write')->withAnyArgs()
@@ -24,18 +25,19 @@ it('preserves write restrictions enforced by the selected filesystem operator', 
     expect(fn () => Storage::disk('restricted')->put('direct.txt', 'contents'))
         ->toThrow(UnableToWriteFile::class, 'Writes are disabled');
 
-    expect(fn () => $directory
-        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-            $files->put('summary.txt', 'contents');
-        }, disk: 'restricted')
-        : VersionedStorage::put('reports', 'contents', disk: 'restricted'))
+    $snapshot = new SnapshotFilesystem(
+        Storage::disk('restricted'),
+        new ResourceIdentity('reports', 'restricted', $directory),
+    );
+
+    expect(fn () => $snapshot->scoped('version')->put($filename, 'contents'))
         ->toThrow(UnableToWriteFile::class, 'Writes are disabled');
 
-    expect($directory
-        ? VersionedStorage::directory('reports', disk: 'restricted')->versions()
-        : VersionedStorage::versions('reports', 'restricted'))->toBe([]);
     $disk->assertDirectoryEmpty('reports');
-})->with([false, true]);
+})->with([
+    'file snapshot' => [false, 'version'],
+    'directory snapshot' => [true, 'summary.txt'],
+]);
 
 it('preserves stream write restrictions enforced by the selected filesystem operator', function () {
     $disk = Storage::disk('local');
@@ -48,11 +50,14 @@ it('preserves stream write restrictions enforced by the selected filesystem oper
     $stream = fopen('php://temp', 'w+b');
     fwrite($stream, 'contents');
     rewind($stream);
+    $snapshot = new SnapshotFilesystem(
+        Storage::disk('restricted'),
+        new ResourceIdentity('reports', 'restricted', false),
+    );
 
     try {
-        expect(fn () => VersionedStorage::put('reports', $stream, disk: 'restricted'))
+        expect(fn () => $snapshot->scoped('version')->put('version', $stream))
             ->toThrow(UnableToWriteFile::class, 'Stream writes are disabled');
-        expect(VersionedStorage::versions('reports', 'restricted'))->toBe([]);
         $disk->assertDirectoryEmpty('reports');
     } finally {
         fclose($stream);

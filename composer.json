@@ -86,8 +86,17 @@
         "test:types": [
             "vendor/bin/pest --type-coverage --min=100 --no-cache"
         ],
-        "test:unit": [
+        "test:all": [
             "vendor/bin/pest --parallel"
+        ],
+        "test:unit": [
+            "vendor/bin/pest --testsuite=Unit --parallel"
+        ],
+        "test:feature": [
+            "vendor/bin/pest --testsuite=Feature --parallel"
+        ],
+        "test:integration": [
+            "vendor/bin/pest --testsuite=Integration --parallel"
         ],
         "test:mutation": [
             "Composer\\Config::disableProcessTimeout",
@@ -97,7 +106,7 @@
             "@analyse",
             "@lint:check",
             "@test:types",
-            "@test:unit"
+            "@test:all"
         ],
         "clear": [
             "@php vendor/bin/testbench package:purge-skeleton --ansi"

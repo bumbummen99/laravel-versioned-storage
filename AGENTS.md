@@ -18,12 +18,22 @@ The directory path contains version directories, which contain the files. So the
 
 ## Quick Commands
 
-- Full validation: `composer test`
-- Formatting check: `composer lint:check`
-- Static analysis: `composer analyse`
-- Pest tests: `composer test:unit`
-- Workbench build: `composer build`
-- Workbench server: `composer serve`
+| Purpose | Command |
+| --- | --- |
+| Full validation | `composer test` |
+| All Pest suites, including architecture | `composer test:all` |
+| Unit suite | `composer test:unit` |
+| Feature suite | `composer test:feature` |
+| Integration suite | `composer test:integration` |
+| Type coverage (100%) | `composer test:types` |
+| Static analysis | `composer analyse` |
+| Check formatting | `composer lint:check` |
+| Apply formatting | `composer lint` |
+| Mutation testing (opt-in; coverage driver required) | `composer test:mutation` |
+| Build Workbench | `composer build` |
+| Serve Workbench | `composer serve` |
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md#validation) for setup and usage details. Commands are defined in [composer.json](composer.json).
 
 ## Local Skills
 
@@ -53,7 +63,9 @@ The directory path contains version directories, which contain the files. So the
 
 See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for contributor setup and test commands. Preserve these less obvious boundaries when changing tests:
 
-- `composer test:unit` runs every Pest suite in parallel. For focused runs, invoke Pest directly; parallel runs accept only one positional test path.
+- `composer test:all` runs every Pest suite in parallel. `test:unit`, `test:feature`, and `test:integration` select their named suites. For focused runs, invoke Pest directly; parallel runs accept only one positional test path.
+- Keep Unit framework-free, Feature focused on Laravel wiring/component interactions, and Integration focused on complete workflows and real infrastructure. Consumer specifications belong in `Integration/PublicApi`, not a separate testing level. Prefer explicit scenarios to boolean-driven workflow matrices.
+- Maintain a bottom-up pyramid: substantially more isolated method/decision tests than Feature composition tests, and more Feature tests than representative Integration workflows. Move detailed permutations down with a mapped replacement; never pad counts or replace real locking, crash, and termination proofs with mocks.
 - Synchronous uploads prove package behavior, not process termination. Keep real subprocess and FPM coverage for timeout, crash recovery, and concurrency guarantees. A skipped FPM test is not validation of that behavior.
 - Use [ProcessWait](tests/Support/ProcessWait.php) for bounded monotonic waits. Readiness may return early; absence-of-late-write observations must run for the entire interval, past the fixture's attempted write. Do not shorten them merely to speed up tests.
 - Use [SubprocessFixture](tests/Support/SubprocessFixture.php) for owned subprocesses and isolated SQLite databases. Give it an unresolved connection name; do not purge an existing application connection to bypass its ownership guard.

@@ -16,8 +16,8 @@ Prove package behavior with Pest 4/5, Orchestra Testbench, and the local `tests/
 
 1. Start with TDD: write the smallest failing package test for the requested behavior, then implement the smallest change that makes it pass.
 2. Cover happy-path, unhappy-path, and edge-case behavior when the feature has meaningful failure modes.
-3. Choose the test category by its purpose using the organization below, not merely whether it boots Laravel.
-4. Use `composer test:unit -- --filter ...` while iterating, `composer test:types` when type-sensitive tests or code changed, and `composer test` before finishing.
+3. Choose the lowest test level that can prove the behavior using the organization below.
+4. Invoke Pest directly for focused files, or use `composer test:unit`, `composer test:feature`, and `composer test:integration` for their named suites. Use `composer test:all` for every Pest suite, `composer test:types` when type-sensitive code changed, and `composer test` before finishing.
 5. Keep real package tests in the suite and remove only throwaway tests that were explicitly created for local scaffolding experiments.
 
 ## Mutation Testing
@@ -31,21 +31,43 @@ Prove package behavior with Pest 4/5, Orchestra Testbench, and the local `tests/
 
 ## Test Organization
 
-- `tests/Specification/`: consumer-facing acceptance examples and public guarantees. Show how Laravel applications use the package, with concrete inputs and visible expected results. Include real process tests when termination or timeout behavior is part of the guarantee.
-- `tests/Feature/`: integration behavior, including journals, transactions, filesystem drivers, service provider wiring, commands, and Testbench-backed lifecycle tests.
-- `tests/Unit/`: isolated class behavior without booting Laravel.
+- `tests/Unit/`: isolated behavior without booting Laravel or resolving its container. Using a framework contract or value object does not itself require Testbench.
+- `tests/Feature/`: focused Laravel wiring/component interactions: configuration, adapters, commands, metadata, journals, and lifecycle mechanisms.
+- `tests/Integration/`: complete workflows and actual infrastructure: public storage APIs, version history, transactions, recovery, concurrent processes, Workbench workers, and real FPM timeout guarantees.
 - `tests/ArchTest.php`: broad architecture constraints.
 - `tests/Support/`: reusable fixtures and subprocess helpers, not a test suite.
 
-Specification and Feature both use Testbench through `tests/Pest.php`; shared setup does not make their purposes interchangeable. Keep Specification separate rather than moving consumer examples into Feature merely because they boot Laravel.
+Feature and Integration use Testbench through `tests/Pest.php`; Unit does not.
+Consumer specifications live in `Integration/PublicApi`: specification describes
+their intent, not another test level. Workbench supplies actual Artisan/queue/HTTP
+host behavior where needed; it is not required for every database test.
 
 Use the existing shallow responsibility-based groups:
 
-- Specification: `Storage` for consumer file/directory examples; `Execution` for runtime and timeout guarantees.
-- Feature: `Storage` for resource ownership, versions, and stages; `Filesystem` for operator configuration, prefixes, and URLs; `Drivers` for driver compatibility; `Uploads` for operation lifecycle, journals, deadlines, and execution; `Transactions` for transaction safety; `Recovery` for cleanup and reader protection; `Package` for service provider wiring; `TestSupport` for Testbench-backed harness tests.
-- Unit: `Filesystem` for isolated operators; `Uploads` for isolated deadlines and execution; `TestSupport` for process helper behavior.
+- Integration: `PublicApi` for consumer examples; `Storage` for resource isolation/reservations and primary metadata; `Transactions` for publication/rollback guarantees; `Concurrency` for competing registrations/publications and protected readers; `Recovery` for reclamation/deletion workflows; `Execution` for real processes/runtime enforcement; `TestSupport` for real infrastructure fixture tests.
+- Feature: `Database` for metadata/transaction mechanisms; `Filesystem` for operator configuration, prefixes, and URLs; `Drivers` for real adapters with simulated transports; `Uploads` for focused upload/journal orchestration; `Recovery` for reclamation and batch reconciliation mechanisms; `Execution` for container/runtime-policy and transfer wiring; `Package` for service provider wiring.
+- Unit: `Actions` for isolated workflow decisions; `Database` for query policy and transaction ownership; `Filesystem` for isolated operators and ownership; `Uploads` for isolated deadlines and execution; `TestSupport` for process helper behavior.
 
-Choose the suite first by purpose, then the matching responsibility group. Do not put harness tests in consumer specifications or create a folder for each new test. Keep shared fixtures in `tests/Support`, not in the suite's `TestSupport` test directory.
+Choose the suite first by level, then the matching responsibility group. Do not put harness tests in public API examples or create a folder for each new test. Keep shared fixtures in `tests/Support`, not in the suite's `TestSupport` test directory. Driver transport fixtures belong in `tests/Support/Drivers`; they do not prove live remote service compatibility.
+
+Use descriptive English names and visible arrange/act/assert steps. Prefer explicit
+file and directory examples to boolean-driven workflow matrices. Keep small named
+datasets for inputs to the same behavior, not branching scenario programs. Helpers
+may simplify setup but must not hide actions or expected outcomes. Build a
+bottom-up pyramid: substantially more framework-free method, transition, and
+decision tests than Feature composition tests, and more Feature tests than
+representative Integration workflows. Move detailed permutations down rather
+than merely renaming directories. Map each replaced scenario to its isolated
+rule and retained wiring or real infrastructure proof. Do not pad counts with
+trivial duplicates or mock away database locks, atomicity, crash recovery, or
+process termination. Independent condition cases do not establish formal
+MC/DC without measurement.
+
+When refactoring tests, inventory scenarios and capture full-suite coverage and a
+fresh mutation baseline first. Preserve every scenario, timing observation, and
+durability boundary. Compare covered source lines/methods and mutation outcomes
+afterward; passing tests alone do not prove parity. Never shrink source scope,
+exclude mutants, or skip infrastructure cases to improve the result.
 
 When moving tests, check relative fixture paths, Pest setup, PHPUnit discovery, and documentation or skill references. Preserve randomized execution and independent tests; directory organization must not impose execution dependencies.
 
@@ -55,7 +77,7 @@ Use `SkyRaptor\LaravelVersionedStorage\Tests\Support\TestPaths::root()` to locat
 
 - `tests/TestCase.php`
 - `tests/Pest.php`
-- `tests/Specification/`
+- `tests/Integration/`
 - `tests/Feature/`
 - `tests/Unit/`
 - `tests/ArchTest.php`

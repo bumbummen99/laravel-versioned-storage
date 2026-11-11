@@ -8,6 +8,8 @@ use Closure;
 use Illuminate\Database\Connection;
 use PDO;
 use RuntimeException;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\FilesystemOperationExecutor;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadClock;
 use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadDeadline;
 use SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\UploadOperation;
 
@@ -44,6 +46,8 @@ final class UploadJournal
                     $this->acknowledge($version, $name !== '' ? $id : '', $pdo);
                 };
             },
+            app(FilesystemOperationExecutor::class),
+            app(UploadClock::class),
         );
     }
 

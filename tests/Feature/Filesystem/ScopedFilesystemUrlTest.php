@@ -2,18 +2,16 @@
 
 declare(strict_types=1);
 
-use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\Storage;
-use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotFilesystem;
+use SkyRaptor\LaravelVersionedStorage\ResourceIdentity;
 
-it('preserves public disk URLs inside directory callbacks', function () {
-    $url = null;
-    $version = VersionedStorage::directory('reports', function (FilesystemAdapter $files) use (&$url): void {
-        $files->put('summary.txt', 'contents');
-        $url = $files->url('summary.txt');
-    });
+it('preserves public disk URLs when constructing a directory snapshot view', function () {
+    $snapshot = new SnapshotFilesystem(Storage::disk('local'), new ResourceIdentity('reports', 'local', true));
+    $files = $snapshot->scoped('version');
+    $files->put('summary.txt', 'contents');
 
-    expect($url)->toBe(Storage::disk('local')->url("reports/{$version}/summary.txt"));
+    expect($files->url('summary.txt'))->toBe(Storage::disk('local')->url('reports/version/summary.txt'));
 });
 
 it('preserves custom temporary URL callbacks configured on the original disk', function () {
@@ -21,28 +19,22 @@ it('preserves custom temporary URL callbacks configured on the original disk', f
     $disk->buildTemporaryUrlsUsing(function (string $path, DateTimeInterface $expiration, array $options): string {
         return 'https://downloads.example.test/'.$path.'?name='.$options['name'];
     });
-    $url = null;
-    $version = VersionedStorage::directory('reports', function (FilesystemAdapter $files) use (&$url): void {
-        expect($files->providesTemporaryUrls())->toBeTrue();
-        $files->put('summary.txt', 'contents');
-        $url = $files->temporaryUrl('summary.txt', now()->addMinute(), ['name' => 'report']);
-    });
+    $snapshot = new SnapshotFilesystem($disk, new ResourceIdentity('reports', 'local', true));
+    $files = $snapshot->scoped('version');
 
-    expect($url)->toBe("https://downloads.example.test/reports/{$version}/summary.txt?name=report");
+    expect($files->providesTemporaryUrls())->toBeTrue()
+        ->and($files->temporaryUrl('summary.txt', now()->addMinute(), ['name' => 'report']))
+        ->toBe('https://downloads.example.test/reports/version/summary.txt?name=report');
 });
 
 it('rejects temporary upload URLs even when the original disk supports them', function () {
     $disk = Mockery::mock(Storage::disk('local'))->makePartial();
     $disk->shouldNotReceive('temporaryUploadUrl');
     $disk->shouldReceive('providesTemporaryUploadUrls')->andReturn(true);
-    Storage::set('local', $disk);
+    $snapshot = new SnapshotFilesystem($disk, new ResourceIdentity('reports', 'local', true));
+    $files = $snapshot->scoped('version');
 
-    expect(fn () => VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-        expect($files->providesTemporaryUploadUrls())->toBeFalse();
-        $files->put('summary.txt', 'contents');
-        $files->temporaryUploadUrl('summary.txt', now()->addMinute());
-    }))->toThrow(RuntimeException::class, 'Temporary upload URLs are not supported for versioned snapshots.');
-
-    expect(VersionedStorage::directory('reports')->versions())->toBe([]);
-    Storage::disk('local')->assertDirectoryEmpty('reports');
+    expect($files->providesTemporaryUploadUrls())->toBeFalse()
+        ->and(fn () => $files->temporaryUploadUrl('summary.txt', now()->addMinute()))
+        ->toThrow(RuntimeException::class, 'Temporary upload URLs are not supported for versioned snapshots.');
 });

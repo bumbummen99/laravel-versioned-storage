@@ -70,7 +70,7 @@ it('does not start filesystem work after recording its journal consumes the oper
     config()->set('laravel-versioned-storage.upload_timeout', 10);
     Event::listen(TransactionCommitted::class, function () use ($clock): void {
         if (DB::table('versioned_storage_operations')->exists()) {
-            $clock->nanoseconds = 10_000_000_000;
+            $clock->advanceMonotonicSeconds(10);
         }
     });
 

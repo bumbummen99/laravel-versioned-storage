@@ -22,4 +22,9 @@ final class TestUploadClock extends UploadClock
     {
         return $this->nanoseconds;
     }
+
+    public function advanceMonotonicSeconds(float $seconds): void
+    {
+        $this->nanoseconds += (int) round($seconds * 1_000_000_000);
+    }
 }

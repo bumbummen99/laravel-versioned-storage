@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution;
 
 use Closure;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Filesystem\FilesystemManager;
 use League\Flysystem\FilesystemOperator;
 use RuntimeException;
 use Throwable;
@@ -14,11 +14,16 @@ use Throwable;
  * Executes one filesystem operation: 1. Check its fixed deadline. 2. Run inline or supervise
  * a fork which rebuilds the disk from captured configuration. 3. Return its result or throw.
  *
- * Stateless, resolved per operation. Does not own journals, publication, or upload callbacks.
+ * Stateless. Does not own journals, publication, or upload callbacks.
  * Forked read streams are copied to a temporary buffer and rewound for the parent caller.
  */
 class FilesystemOperationExecutor
 {
+    public function __construct(
+        private readonly ForkUpload $fork,
+        private readonly FilesystemManager $filesystems,
+    ) {}
+
     /**
      * @template TResult
      *
@@ -39,10 +44,10 @@ class FilesystemOperationExecutor
             return $callback($filesystem);
         }
 
-        return app(ForkUpload::class)->run(static function () use ($configuration, $callback, $deadline): mixed {
+        return $this->fork->run(function () use ($configuration, $callback, $deadline): mixed {
             pcntl_alarm($deadline->remainingSeconds());
 
-            return $callback(Storage::build($configuration)->getDriver());
+            return $callback($this->filesystems->build($configuration)->getDriver());
         }, $deadline->timeout);
     }
 

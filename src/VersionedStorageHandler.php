@@ -53,7 +53,7 @@ class VersionedStorageHandler
         $metadata = new ResourceMetadata($connection, $resource);
         $journal = new UploadJournal($connection, $metadata);
         $filesystem = Storage::disk($disk);
-        $ownership = new ResourceOwnership($connection, $resource, $filesystem);
+        $ownership = new ResourceOwnership($connection, $resource, $filesystem, app('filesystem'), config());
         $registration = new RegisterResource($connection, $resource, $metadata, $ownership);
         $snapshots = new SnapshotFilesystem($filesystem, $resource);
         $this->deletion = new SnapshotDeletion($connection, $resource, $metadata, $ownership, $filesystem);

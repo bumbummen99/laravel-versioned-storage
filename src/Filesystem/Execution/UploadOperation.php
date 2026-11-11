@@ -35,6 +35,8 @@ final class UploadOperation
         private readonly array $execution,
         private readonly array $configuration,
         private readonly Closure $beginOperation,
+        private readonly FilesystemOperationExecutor $executor,
+        private readonly UploadClock $clock,
     ) {}
 
     public function assertHealthy(): void
@@ -80,12 +82,12 @@ final class UploadOperation
             'write', 'writeStream', 'createDirectory', 'delete', 'deleteDirectory', 'copy', 'move', 'setVisibility',
         ], true);
         $id = (string) Str::uuid();
-        $deadline = new UploadDeadline($this->execution['timeout'], $this->execution['fork'], app(UploadClock::class));
+        $deadline = new UploadDeadline($this->execution['timeout'], $this->execution['fork'], $this->clock);
 
         try {
             // Read operations also lock/check the stage, but do not leave mutation journals.
             $acknowledge = ($this->beginOperation)($id, $mutation ? $operation : '', $deadline);
-            $result = $execute(app(FilesystemOperationExecutor::class), $deadline);
+            $result = $execute($this->executor, $deadline);
 
             try {
                 $acknowledge();

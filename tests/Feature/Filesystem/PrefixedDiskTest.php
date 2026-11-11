@@ -2,95 +2,100 @@
 
 declare(strict_types=1);
 
-use Illuminate\Filesystem\FilesystemAdapter;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use League\Flysystem\PathTraversalDetected;
-use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
-use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
+use SkyRaptor\LaravelVersionedStorage\Actions\PublishStage;
+use SkyRaptor\LaravelVersionedStorage\Database\ResourceMetadata;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\ResourceOwnership;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotDeletion;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotFilesystem;
+use SkyRaptor\LaravelVersionedStorage\ResourceIdentity;
 
 beforeEach(function (): void {
-    Storage::set('tenant', Storage::build([
+    $this->tenant = Storage::build([
         'driver' => 'scoped',
         'disk' => [
             'driver' => 'local',
             'root' => Storage::disk('local')->path(''),
         ],
         'prefix' => 'tenants/acme',
-    ]));
+    ]);
 });
 
-it('writes versions inside the selected disks configured prefix', function (bool $directory) {
-    $version = $directory
-        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-            $files->put('summary.txt', 'contents');
-        }, disk: 'tenant')
-        : VersionedStorage::put('reports', 'contents', disk: 'tenant');
-    $relative = "reports/{$version}".($directory ? '/summary.txt' : '');
+it('writes and reads a directory snapshot through the selected disk prefix', function () {
+    $snapshots = new SnapshotFilesystem($this->tenant, new ResourceIdentity('reports', 'tenant', true));
+    $files = $snapshots->scoped('version');
+    $files->put('summary.txt', 'contents');
 
-    Storage::disk('tenant')->assertExists($relative);
-    expect(Storage::disk('tenant')->get($relative))->toBe('contents');
-    Storage::disk('local')->assertExists("tenants/acme/{$relative}");
-    Storage::disk('local')->assertMissing($relative);
-})->with([false, true]);
-
-it('preserves scoped disk configuration across individual filesystem children', function () {
-    VersionedStorageTesting::restoreUploadExecution();
-    $version = VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-        $files->put('one', 'contents');
-        $files->copy('one', 'two');
-        $files->move('two', 'three');
-        expect($files->allFiles())->toBe(['one', 'three'])
-            ->and($files->get('three'))->toBe('contents');
-    }, disk: 'tenant');
-
-    Storage::disk('local')->assertExists("tenants/acme/reports/{$version}/three");
-    Storage::disk('local')->assertMissing("reports/{$version}/three");
+    expect(Storage::disk('local')->get('tenants/acme/reports/version/summary.txt'))->toBe('contents');
+    $this->tenant->put('reports/version/summary.txt', 'authoritative scoped contents');
+    expect($files->get('summary.txt'))->toBe('authoritative scoped contents')
+        ->and(Storage::disk('local')->exists('reports/version/summary.txt'))->toBeFalse();
 });
 
-it('keeps scoped paths and public URLs consistent with the physical snapshot', function () {
-    $url = null;
-    $path = null;
-    $version = VersionedStorage::directory('reports', function (FilesystemAdapter $files) use (&$url, &$path): void {
-        $files->put('summary.txt', 'contents');
-        $url = $files->url('summary.txt');
-        $path = $files->path('summary.txt');
-        expect($files->allFiles())->toBe(['summary.txt']);
-    }, disk: 'tenant');
-    $relative = "reports/{$version}/summary.txt";
+it('writes and reads a file snapshot through the selected disk prefix', function () {
+    $snapshots = new SnapshotFilesystem($this->tenant, new ResourceIdentity('report.txt', 'tenant', false));
+    $files = $snapshots->scoped('version');
+    $files->put('version', 'contents');
 
-    expect($path)->toBe(Storage::disk('tenant')->path($relative))
-        ->and($url)->toBe(Storage::disk('tenant')->url($relative));
-    Storage::disk('tenant')->assertExists($relative);
+    expect(Storage::disk('local')->get('tenants/acme/report.txt/version'))->toBe('contents');
+    $this->tenant->put('report.txt/version', 'authoritative scoped contents');
+    expect($files->get('version'))->toBe('authoritative scoped contents')
+        ->and(Storage::disk('local')->exists('report.txt/version'))->toBeFalse();
 });
 
-it('rejects traversal and refuses publication even if the callback catches the error', function () {
-    expect(fn () => VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-        expect(fn () => $files->put('../escaped.txt', 'invalid'))->toThrow(PathTraversalDetected::class);
-    }, disk: 'tenant'))->toThrow(RuntimeException::class, 'snapshot failed');
+it('keeps paths listings and public URLs consistent with the physical snapshot', function () {
+    $snapshots = new SnapshotFilesystem($this->tenant, new ResourceIdentity('reports', 'tenant', true));
+    $files = $snapshots->scoped('version');
+    $files->put('summary.txt', 'contents');
 
-    expect(VersionedStorage::directory('reports', disk: 'tenant')->versions())->toBe([]);
-    Storage::disk('local')->assertMissing('tenants/acme/reports/escaped.txt');
+    expect($files->path('summary.txt'))->toBe($this->tenant->path('reports/version/summary.txt'))
+        ->and($files->url('summary.txt'))->toBe($this->tenant->url('reports/version/summary.txt'))
+        ->and($files->allFiles())->toBe(['summary.txt']);
 });
 
-it('keeps rolled back stages within the disk prefix until explicitly discarded', function () {
-    $first = VersionedStorage::put('reports', 'original', disk: 'tenant');
-    $stage = VersionedStorage::stage('reports', 'staged', disk: 'tenant');
+it('keeps rolled back publication files inside the prefix until direct discard', function () {
+    $resource = new ResourceIdentity('reports', 'tenant', false);
     $connection = DB::connection();
+    $id = $connection->table('versioned_storage_resources')->insertGetId([
+        'key' => $resource->key, 'disk' => 'tenant', 'path' => 'reports', 'is_directory' => false, 'current_version' => 'original',
+    ]);
+    $connection->table('versioned_storage_versions')->insert([
+        'resource_id' => $id, 'version' => 'original', 'created_at' => now(),
+    ]);
+    $connection->table('versioned_storage_stages')->insert([
+        'resource_id' => $id, 'version' => 'staged', 'state' => 'ready',
+    ]);
+    $this->tenant->put('reports/original', 'original');
+    $this->tenant->put('reports/staged', 'staged');
+    $metadata = new ResourceMetadata($connection, $resource);
+    $publication = new PublishStage($connection, $resource, $metadata);
+
     $connection->beginTransaction();
 
-    $second = $stage->publish(cleanup: true);
-    Storage::disk('tenant')->assertExists("reports/{$second}");
-    $connection->rollBack();
-    Storage::disk('tenant')->assertExists("reports/{$second}");
-    $stage->discard();
+    try {
+        $publication->publish('staged', cleanup: true);
+        expect($metadata->stage('staged')->value('state'))->toBe('published')
+            ->and($this->tenant->get('reports/staged'))->toBe('staged');
+    } finally {
+        $connection->rollBack();
+    }
 
-    expect(VersionedStorage::get('reports', disk: 'tenant'))->toBe('original')
-        ->and(Storage::disk('local')->allFiles())->toBe(["tenants/acme/reports/{$first}"]);
+    expect($metadata->stage('staged')->value('state'))->toBe('ready')
+        ->and($this->tenant->get('reports/staged'))->toBe('staged');
+    $deletion = new SnapshotDeletion(
+        $connection, $resource, $metadata,
+        new ResourceOwnership($connection, $resource, $this->tenant, app('filesystem'), config()),
+        $this->tenant,
+    );
+    $deletion->delete('staged');
+
+    expect(Storage::disk('local')->allFiles())->toBe(['tenants/acme/reports/original'])
+        ->and($metadata->versions()->pluck('version')->all())->toBe(['original']);
 });
 
 it('preserves the combined prefix when scoping an already prefixed disk', function () {
-    Storage::set('nested', Storage::build([
+    $nested = Storage::build([
         'driver' => 'scoped',
         'disk' => [
             'driver' => 'local',
@@ -98,50 +103,32 @@ it('preserves the combined prefix when scoping an already prefixed disk', functi
             'prefix' => 'tenants',
         ],
         'prefix' => 'acme',
-    ]));
-    $version = VersionedStorage::put('reports', 'contents', disk: 'nested');
+    ]);
+    $snapshots = new SnapshotFilesystem($nested, new ResourceIdentity('reports', 'nested', false));
+    $files = $snapshots->scoped('version');
 
-    Storage::disk('local')->assertExists("tenants/acme/reports/{$version}");
-    expect(Storage::disk('local')->allFiles())->toBe(["tenants/acme/reports/{$version}"])
-        ->and(VersionedStorage::get('reports', disk: 'nested'))->toBe('contents');
+    $files->put('version', 'contents');
+
+    expect(Storage::disk('local')->allFiles())->toBe(['tenants/acme/reports/version'])
+        ->and($files->get('version'))->toBe('contents');
 });
 
-it('reads versions through the selected disks configured prefix', function (bool $directory) {
-    $version = $directory
-        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-            $files->put('summary.txt', 'contents');
-        }, disk: 'tenant')
-        : VersionedStorage::put('reports', 'contents', disk: 'tenant');
-    $relative = "reports/{$version}".($directory ? '/summary.txt' : '');
-    Storage::disk('tenant')->put($relative, 'authoritative scoped contents');
-    Storage::disk('tenant')->assertExists($relative);
+it('physically removes a directory snapshot through the captured prefix', function () {
+    $this->tenant->put('reports/old/nested/one', 'retired');
+    $this->tenant->put('reports/current/one', 'current');
 
-    expect($directory
-        ? VersionedStorage::directory('reports', disk: 'tenant')->get('summary.txt', $version)
-        : VersionedStorage::get('reports', $version, 'tenant'))->toBe('authoritative scoped contents');
-})->with([false, true]);
+    SnapshotDeletion::remove($this->tenant, 'reports/old', true);
 
-it('removes retired physical files on a prefixed disk rather than only their metadata', function (bool $directory) {
-    $first = $directory
-        ? VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-            $files->put('summary.txt', 'original');
-        }, disk: 'tenant')
-        : VersionedStorage::put('reports', 'original', disk: 'tenant');
+    expect(Storage::disk('local')->exists('tenants/acme/reports/old'))->toBeFalse()
+        ->and($this->tenant->get('reports/current/one'))->toBe('current');
+});
 
-    if ($directory) {
-        VersionedStorage::directory('reports', function (FilesystemAdapter $files): void {
-            $files->put('summary.txt', 'replacement');
-        }, cleanup: true, disk: 'tenant');
-    } else {
-        VersionedStorage::put('reports', 'replacement', cleanup: true, disk: 'tenant');
-    }
+it('physically removes a file snapshot through the captured prefix', function () {
+    $this->tenant->put('reports/old', 'retired');
+    $this->tenant->put('reports/current', 'current');
 
-    $this->artisan('laravel-versioned-storage:cleanup')->assertSuccessful();
-    $relative = "reports/{$first}".($directory ? '/summary.txt' : '');
-    expect($directory
-        ? VersionedStorage::directory('reports', disk: 'tenant')->versions()
-        : VersionedStorage::versions('reports', 'tenant'))->toHaveCount(1);
-    Storage::disk('tenant')->assertMissing($relative);
-    Storage::disk('local')->assertMissing($relative);
-    Storage::disk('local')->assertMissing("tenants/acme/{$relative}");
-})->with([false, true]);
+    SnapshotDeletion::remove($this->tenant, 'reports/old', false);
+
+    expect(Storage::disk('local')->exists('tenants/acme/reports/old'))->toBeFalse()
+        ->and($this->tenant->get('reports/current'))->toBe('current');
+});

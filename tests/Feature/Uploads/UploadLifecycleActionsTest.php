@@ -27,7 +27,7 @@ beforeEach(function () {
     $this->resource = new ResourceIdentity('actions', 'local', true);
     $this->disk = Storage::disk('local');
     $this->metadata = new ResourceMetadata($this->connection, $this->resource);
-    $ownership = new ResourceOwnership($this->connection, $this->resource, $this->disk);
+    $ownership = new ResourceOwnership($this->connection, $this->resource, $this->disk, app('filesystem'), config());
     $this->registration = new RegisterResource($this->connection, $this->resource, $this->metadata, $ownership);
     $this->snapshots = new SnapshotFilesystem($this->disk, $this->resource);
     $this->reservation = new ReserveDestination($this->connection, $this->resource, $this->disk);
@@ -114,50 +114,69 @@ it('commits stage intent before IO and closes callback filesystems before comple
         ->and(fn () => $retained->put('late', 'forbidden'))->toThrow(RuntimeException::class, 'already finished');
 });
 
-it('closes retained callback filesystems on every failed exit without allowing late writes', function (string $phase) {
+it('closes the callback filesystem when the callback throws', function () {
     $retained = null;
     $version = null;
-    $message = match ($phase) {
-        'callback' => 'callback failed',
-        'validation' => 'Uploads cannot run inside a metadata transaction',
-        'publication' => 'publication unavailable',
-    };
-    $callback = function (FilesystemAdapter $files, string $id) use ($phase, &$retained, &$version): void {
+    $callback = function (FilesystemAdapter $files, string $id) use (&$retained, &$version): void {
         $retained = $files;
         $version = $id;
         $files->put('one', 'completed');
 
-        if ($phase === 'callback') {
-            throw new RuntimeException('callback failed');
-        }
-
-        if ($phase === 'validation') {
-            $this->connection->beginTransaction();
-        }
+        throw new RuntimeException('callback failed');
     };
 
-    if ($phase === 'publication') {
-        $this->connection->statement("CREATE TRIGGER reject_workflow_publication BEFORE INSERT ON versioned_storage_versions BEGIN SELECT RAISE(FAIL, 'publication unavailable'); END");
-    }
+    expect(fn () => $this->workflow->stage($callback, true))
+        ->toThrow(RuntimeException::class, 'callback failed');
+
+    expect($retained)->toBeInstanceOf(FilesystemAdapter::class)
+        ->and(fn () => $retained->put('late', 'forbidden'))->toThrow(RuntimeException::class, 'already finished')
+        ->and($this->metadata->versions()->exists())->toBeFalse();
+    $this->disk->assertMissing("actions/{$version}/late");
+});
+
+it('closes the callback filesystem when its callback leaves a metadata transaction open', function () {
+    $retained = null;
+    $version = null;
+    $callback = function (FilesystemAdapter $files, string $id) use (&$retained, &$version): void {
+        $retained = $files;
+        $version = $id;
+        $files->put('one', 'completed');
+        $this->connection->beginTransaction();
+    };
 
     try {
         expect(fn () => $this->workflow->stage($callback, true))
-            ->toThrow($phase === 'publication' ? QueryException::class : RuntimeException::class, $message);
-
+            ->toThrow(RuntimeException::class, 'Uploads cannot run inside a metadata transaction');
         expect($retained)->toBeInstanceOf(FilesystemAdapter::class)
             ->and(fn () => $retained->put('late', 'forbidden'))->toThrow(RuntimeException::class, 'already finished')
             ->and($this->metadata->versions()->exists())->toBeFalse();
         $this->disk->assertMissing("actions/{$version}/late");
     } finally {
-        if ($phase === 'validation') {
-            $this->connection->rollBack();
-        }
-
-        if ($phase === 'publication') {
-            $this->connection->statement('DROP TRIGGER reject_workflow_publication');
-        }
+        $this->connection->rollBack();
     }
-})->with(['callback', 'validation', 'publication']);
+});
+
+it('closes the callback filesystem before handling publication failure', function () {
+    $retained = null;
+    $version = null;
+    $callback = function (FilesystemAdapter $files, string $id) use (&$retained, &$version): void {
+        $retained = $files;
+        $version = $id;
+        $files->put('one', 'completed');
+    };
+    $this->connection->statement("CREATE TRIGGER reject_workflow_publication BEFORE INSERT ON versioned_storage_versions BEGIN SELECT RAISE(FAIL, 'publication unavailable'); END");
+
+    try {
+        expect(fn () => $this->workflow->stage($callback, true))
+            ->toThrow(QueryException::class, 'publication unavailable');
+        expect($retained)->toBeInstanceOf(FilesystemAdapter::class)
+            ->and(fn () => $retained->put('late', 'forbidden'))->toThrow(RuntimeException::class, 'already finished')
+            ->and($this->metadata->versions()->exists())->toBeFalse();
+        $this->disk->assertMissing("actions/{$version}/late");
+    } finally {
+        $this->connection->statement('DROP TRIGGER reject_workflow_publication');
+    }
+});
 
 it('rolls back readiness with publication when the atomic completion action fails', function () {
     $execution = ['timeout' => 10, 'fork' => false];

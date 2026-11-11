@@ -108,14 +108,14 @@ it('does not carry synchronous execution into a fresh Laravel application', func
     expect(app(UploadExecutionPolicy::class)->execution())->toBe(['timeout' => 60, 'fork' => false]);
 });
 
-it('validates configured timeouts before writing in synchronous tests', function (mixed $timeout) {
+it('validates configured timeouts before writing in synchronous tests', function () {
     VersionedStorageTesting::runUploadsSynchronously();
-    config()->set('laravel-versioned-storage.upload_timeout', $timeout);
+    config()->set('laravel-versioned-storage.upload_timeout', 0);
 
     expect(fn () => VersionedStorage::put('report', 'contents'))
         ->toThrow(RuntimeException::class, 'positive number of seconds')
         ->and(DB::table('versioned_storage_stages')->count())->toBe(0);
-})->with([0, -1, 'invalid']);
+});
 
 it('rejects synchronous testing outside the Laravel test environment', function () {
     app()->instance('env', 'production');

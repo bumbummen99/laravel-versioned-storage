@@ -6,6 +6,7 @@ namespace SkyRaptor\LaravelVersionedStorage\Filesystem\Execution\Policies;
 
 use Illuminate\Console\Events\CommandFinished;
 use Illuminate\Console\Events\CommandStarting;
+use Illuminate\Contracts\Config\Repository;
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Queue\Events\JobExceptionOccurred;
 use Illuminate\Queue\Events\JobProcessed;
@@ -27,6 +28,8 @@ class UploadContext implements UploadExecutionPolicy
 
     /** @var list<Job> */
     private array $jobs = [];
+
+    public function __construct(private readonly Repository $configuration) {}
 
     public function commandStarting(CommandStarting $event): void
     {
@@ -94,7 +97,7 @@ class UploadContext implements UploadExecutionPolicy
             return ['timeout' => $timeout, 'fork' => $worker['once']];
         }
 
-        $timeout = $this->positiveTimeout(config('laravel-versioned-storage.upload_timeout'));
+        $timeout = $this->positiveTimeout($this->configuration->get('laravel-versioned-storage.upload_timeout'));
 
         return match ($this->sapi()) {
             'fpm-fcgi' => ['timeout' => $timeout, 'fork' => false],

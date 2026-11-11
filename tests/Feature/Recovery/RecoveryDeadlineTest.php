@@ -2,43 +2,87 @@
 
 declare(strict_types=1);
 
-use Illuminate\Database\QueryException;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
-use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
-use SkyRaptor\LaravelVersionedStorage\VersionedStorageHandler;
+use Illuminate\Support\Str;
+use SkyRaptor\LaravelVersionedStorage\Actions\CleanupSnapshots;
+use SkyRaptor\LaravelVersionedStorage\Actions\RecoverUploads;
+use SkyRaptor\LaravelVersionedStorage\Actions\RegisterResource;
+use SkyRaptor\LaravelVersionedStorage\Database\ResourceMetadata;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\ResourceOwnership;
+use SkyRaptor\LaravelVersionedStorage\Filesystem\SnapshotDeletion;
+use SkyRaptor\LaravelVersionedStorage\ResourceIdentity;
 
-it('retains an uncertain snapshot before its deadline and permits deletion at or after it', function (string $action, int $offset) {
+beforeEach(function (): void {
     $this->freezeTime();
-    DB::statement("CREATE TRIGGER reject_acknowledgement BEFORE DELETE ON versioned_storage_operations BEGIN SELECT RAISE(FAIL, 'acknowledgement unavailable'); END");
+    $this->connection = DB::connection();
+    $this->resource = new ResourceIdentity('uncertain', 'local', false);
+    $this->metadata = new ResourceMetadata($this->connection, $this->resource);
+    $this->disk = Storage::disk('local');
+    $ownership = new ResourceOwnership($this->connection, $this->resource, $this->disk, app('filesystem'), config());
+    $registration = new RegisterResource($this->connection, $this->resource, $this->metadata, $ownership);
+    $recovery = new RecoverUploads($this->connection, $this->resource, $this->metadata, $registration);
+    $this->cleanup = new CleanupSnapshots(
+        $this->connection, $this->metadata, $recovery,
+        new SnapshotDeletion($this->connection, $this->resource, $this->metadata, $ownership, $this->disk),
+    );
+    $registration->register();
+    $this->version = (string) Str::uuid();
+    $this->deadline = now()->addMinute();
+    $this->connection->table('versioned_storage_reservations')->insert(['version' => $this->version]);
+    $this->connection->table('versioned_storage_stages')->insert([
+        'resource_id' => $this->metadata->lockResource()->id, 'version' => $this->version,
+        'state' => 'uploading', 'failed' => true, 'cleanup_after' => $this->deadline,
+    ]);
+    $this->connection->table('versioned_storage_operations')->insert([
+        'id' => (string) Str::uuid(), 'version' => $this->version,
+        'operation' => 'write', 'cleanup_after' => $this->deadline,
+    ]);
+    $this->disk->put("uncertain/{$this->version}", 'unacknowledged bytes');
+});
 
-    try {
-        expect(fn () => VersionedStorage::put('deadline', 'contents'))
-            ->toThrow(QueryException::class, 'acknowledgement unavailable');
-    } finally {
-        DB::statement('DROP TRIGGER reject_acknowledgement');
-    }
+it('refuses explicit discard one second before the uncertain writer deadline', function () {
+    $this->travelTo($this->deadline->copy()->subSecond());
 
-    $journal = DB::table('versioned_storage_operations')->sole();
-    $handler = new VersionedStorageHandler('deadline', 'local', false);
-    $this->travelTo(Carbon::parse($journal->cleanup_after)->addSeconds($offset));
+    expect(fn () => $this->cleanup->discard($this->version))
+        ->toThrow(RuntimeException::class, 'must retain its journal until the cleanup deadline')
+        ->and($this->metadata->stage($this->version)->value('state'))->toBe('uploading')
+        ->and($this->connection->table('versioned_storage_operations')->count())->toBe(1)
+        ->and($this->metadata->versions()->count())->toBe(0);
+    $this->disk->assertExists("uncertain/{$this->version}");
+});
 
-    if ($action === 'discard' && $offset < 0) {
-        expect(fn () => $handler->discardStage($journal->version))
-            ->toThrow(RuntimeException::class, 'must retain its journal until the cleanup deadline');
-    } elseif ($action === 'discard') {
-        $handler->discardStage($journal->version);
-    } else {
-        $handler->cleanup();
-    }
+it('retains the snapshot and journal when automatic cleanup runs before the deadline', function () {
+    $this->travelTo($this->deadline->copy()->subSecond());
 
-    expect(DB::table('versioned_storage_operations')->where('version', $journal->version)->exists())->toBe($offset < 0)
-        ->and(DB::table('versioned_storage_stages')->where('version', $journal->version)->exists())->toBe($offset < 0)
-        ->and(Storage::disk('local')->exists("deadline/{$journal->version}"))->toBe($offset < 0)
-        ->and(VersionedStorage::versions('deadline'))->toBe([]);
-})->with(['discard', 'cleanup'])->with([
-    'one second before' => -1,
-    'exact deadline' => 0,
-    'one second after' => 1,
-]);
+    $this->cleanup->cleanup();
+
+    expect($this->metadata->stage($this->version)->value('state'))->toBe('uploading')
+        ->and($this->connection->table('versioned_storage_operations')->count())->toBe(1)
+        ->and($this->metadata->versions()->count())->toBe(0);
+    $this->disk->assertExists("uncertain/{$this->version}");
+});
+
+it('discards the uncertain snapshot once its recovery deadline has elapsed', function (int $offset) {
+    $this->travelTo($this->deadline->copy()->addSeconds($offset));
+
+    $this->cleanup->discard($this->version);
+
+    expect($this->metadata->stage($this->version)->exists())->toBeFalse()
+        ->and($this->connection->table('versioned_storage_operations')->count())->toBe(0)
+        ->and($this->metadata->versions()->count())->toBe(0)
+        ->and($this->connection->table('versioned_storage_reservations')->where('version', $this->version)->exists())->toBeTrue();
+    $this->disk->assertMissing("uncertain/{$this->version}");
+})->with(['at the deadline' => 0, 'after the deadline' => 1]);
+
+it('reclaims and deletes the uncertain snapshot once its recovery deadline has elapsed', function (int $offset) {
+    $this->travelTo($this->deadline->copy()->addSeconds($offset));
+
+    $this->cleanup->cleanup();
+
+    expect($this->metadata->stage($this->version)->exists())->toBeFalse()
+        ->and($this->connection->table('versioned_storage_operations')->count())->toBe(0)
+        ->and($this->metadata->versions()->count())->toBe(0)
+        ->and($this->connection->table('versioned_storage_reservations')->where('version', $this->version)->exists())->toBeTrue();
+    $this->disk->assertMissing("uncertain/{$this->version}");
+})->with(['at the deadline' => 0, 'after the deadline' => 1]);

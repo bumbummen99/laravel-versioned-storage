@@ -2,18 +2,15 @@
 
 declare(strict_types=1);
 
-use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Database\Events\TransactionCommitted;
 use Illuminate\Database\QueryException;
 use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use League\Flysystem\Filesystem;
 use League\Flysystem\UnableToWriteFile;
-use SkyRaptor\LaravelVersionedStorage\Testing\VersionedStorageTesting;
 use SkyRaptor\LaravelVersionedStorage\VersionedStorage;
 
 it('commits one mutation journal before each operation and removes it before the next', function () {
@@ -178,38 +175,4 @@ it('gives each operation a fresh deadline without retaining successful operation
     });
 
     expect($stage->publish())->toBe($stage->version);
-});
-
-it('keeps callbacks and every metadata query in the parent when supervising filesystem operations', function () {
-    VersionedStorageTesting::restoreUploadExecution();
-    $parent = getmypid();
-    DB::listen(function (QueryExecuted $event) use ($parent): void {
-        if (getmypid() !== $parent) {
-            throw new RuntimeException('Child attempted a metadata query: '.$event->sql);
-        }
-    });
-    $called = false;
-    $stage = VersionedStorage::stageDirectory('reports', function (FilesystemAdapter $files) use ($parent, &$called): void {
-        expect(getmypid())->toBe($parent)->and(DB::transactionLevel())->toBe(0);
-        $called = true;
-        $files->put('one', 'contents');
-        $stream = $files->readStream('one');
-        expect(stream_get_contents($stream))->toBe('contents');
-        fclose($stream);
-        expect($files->allFiles())->toBe(['one']);
-    });
-
-    expect($called)->toBeTrue()
-        ->and(DB::table('versioned_storage_operations')->count())->toBe(0)
-        ->and($stage->publish())->toBe($stage->version)
-        ->and(VersionedStorage::directory('reports')->get('one'))->toBe('contents');
-});
-
-it('writes uploaded file streams in a child without moving file handling or metadata into it', function () {
-    VersionedStorageTesting::restoreUploadExecution();
-    $upload = UploadedFile::fake()->createWithContent('report.txt', 'streamed contents');
-    $version = VersionedStorage::put('report', $upload);
-
-    expect(VersionedStorage::get('report', $version))->toBe('streamed contents')
-        ->and(DB::table('versioned_storage_operations')->count())->toBe(0);
 });

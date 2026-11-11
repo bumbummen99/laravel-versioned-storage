@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Illuminate\Config\Repository;
 use Illuminate\Console\Events\CommandStarting;
 use Illuminate\Contracts\Queue\Job;
 use Illuminate\Queue\Events\JobProcessing;
@@ -13,7 +14,7 @@ require __DIR__.'/autoload.php';
 
 $job = Mockery::mock(Job::class);
 $job->shouldReceive('timeout')->andReturn(null);
-$context = new UploadContext;
+$context = new UploadContext(new Repository);
 $context->commandStarting(new CommandStarting('queue:work', new ArgvInput(['artisan', '--timeout=10']), new NullOutput));
 $context->jobProcessing(new JobProcessing('testing', $job));
 $context->execution();

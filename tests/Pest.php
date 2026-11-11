@@ -13,4 +13,4 @@ uses(TestCase::class)
         config()->set('concurrency.default', 'sync');
         VersionedStorageTesting::runUploadsSynchronously();
     })
-    ->in('Specification', 'Feature');
+    ->in('Feature', 'Integration');

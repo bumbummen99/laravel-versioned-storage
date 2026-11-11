@@ -151,3 +151,69 @@ it('rejects temporary upload URLs even with a custom scoped upload URL callback'
     expect(fn () => $filesystem->temporaryUploadUrl('summary.txt', new DateTimeImmutable))
         ->toThrow(RuntimeException::class, 'Temporary upload URLs are not supported for versioned snapshots.');
 });
+
+it('preserves unrelated disk configuration while forcing scoped write exceptions', function () {
+    $adapter = Mockery::mock(FlysystemAdapter::class);
+    $original = new FilesystemAdapter(new Filesystem($adapter), $adapter, [
+        'throw' => false, 'visibility' => 'private', 'url' => 'https://files.test',
+    ]);
+    $filesystem = new VersionedFilesystem($original, '/reports/version/');
+
+    expect($filesystem->getConfig())->toBe([
+        'throw' => true, 'visibility' => 'private', 'url' => 'https://files.test', 'prefix' => 'reports/version',
+    ])->and($original->getConfig()['throw'])->toBeFalse();
+});
+
+it('combines the existing physical prefix only in adapter configuration', function () {
+    $adapter = Mockery::mock(FlysystemAdapter::class);
+    $original = new FilesystemAdapter(new Filesystem($adapter), $adapter, ['prefix' => 'tenant']);
+    $filesystem = new VersionedFilesystem($original, 'reports/version');
+
+    expect($filesystem->getConfig()['prefix'])->toBe('tenant/reports/version')
+        ->and($filesystem->path('one'))->toEndWith('tenant/reports/version/one');
+});
+
+it('normalizes URL paths without allowing them to change snapshots', function (string $path, string $expected) {
+    $adapter = Mockery::mock(FlysystemAdapter::class);
+    $original = Mockery::mock(FilesystemAdapter::class, [new Filesystem($adapter), $adapter])->makePartial();
+    $original->shouldReceive('url')->once()->with($expected)->andReturn('https://files.test/'.$expected);
+    $filesystem = new VersionedFilesystem($original, 'reports/version/');
+
+    expect($filesystem->url($path))->toBe('https://files.test/'.$expected);
+})->with([
+    'leading slash' => ['/one', 'reports/version/one'],
+    'dot segments' => ['nested/../one', 'reports/version/one'],
+    'repeated separators' => ['nested//one', 'reports/version/nested/one'],
+    'backslashes' => ['nested\\one', 'reports/version/nested/one'],
+]);
+
+it('passes expiration and options unchanged to original temporary URL callbacks', function () {
+    $adapter = Mockery::mock(FlysystemAdapter::class);
+    $original = new FilesystemAdapter(new Filesystem($adapter), $adapter);
+    $expiration = new DateTimeImmutable('+1 hour');
+    $original->buildTemporaryUrlsUsing(function ($path, $expires, $options) use ($expiration): string {
+        expect($path)->toBe('reports/version/one')
+            ->and($expires)->toBe($expiration)
+            ->and($options)->toBe(['download' => 'report.txt']);
+
+        return 'https://signed.test';
+    });
+    $filesystem = new VersionedFilesystem($original, 'reports/version');
+
+    expect($filesystem->temporaryUrl('one', $expiration, ['download' => 'report.txt']))->toBe('https://signed.test');
+});
+
+it('gives a scoped temporary URL callback precedence over the original callback', function () {
+    $adapter = Mockery::mock(FlysystemAdapter::class);
+    $original = new FilesystemAdapter(new Filesystem($adapter), $adapter);
+    $original->buildTemporaryUrlsUsing(fn () => throw new LogicException('Original callback must not run'));
+    $filesystem = new VersionedFilesystem($original, 'reports/version');
+    $expiration = new DateTimeImmutable;
+    $filesystem->buildTemporaryUrlsUsing(function ($path, $expires, $options) use ($expiration): string {
+        expect($path)->toBe('one')->and($expires)->toBe($expiration)->and($options)->toBe(['name' => 'one']);
+
+        return 'https://scoped.test';
+    });
+
+    expect($filesystem->temporaryUrl('one', $expiration, ['name' => 'one']))->toBe('https://scoped.test');
+});

@@ -260,6 +260,13 @@ deadline, while callback failure/closed state is shared. Stage deadlines only
 extend. Per-operation deadlines, whole-second rounding, and fork margins do not
 change during execution. Callback duration is not bounded by the operation timeout.
 
+The callback context receives its executor and clock explicitly; it does not
+resolve services while performing an operation. The executor receives the fork
+supervisor and filesystem manager. Runtime policy receives configuration and
+reads it afresh on admission. These native dependency boundaries allow isolated
+decision tests without starting Laravel; journal persistence and real process
+enforcement remain separate Feature and Integration proofs.
+
 ## 5. Cleanup eligibility and physical deletion are separate
 
 `CleanupSnapshots` owns the resource workflow and atomic eligibility checks.
@@ -330,7 +337,7 @@ Locks are transaction-scoped, not tied to an action object's lifetime.
 Test cohesive mechanisms directly and workflows through their real metadata and
 filesystem effects. Do not expose private steps just to test them. Examples:
 
-- [LifecycleActionsTest](../tests/Feature/Storage/LifecycleActionsTest.php): independent
+- [ResourceMetadataTest](../tests/Feature/Database/ResourceMetadataTest.php): independent
   registration, idempotency, and overlap rejection without upload side effects;
   resource-scoped metadata locks, fresh reads, and caller-owned transaction rollback.
 - [UploadLifecycleActionsTest](../tests/Feature/Uploads/UploadLifecycleActionsTest.php):
@@ -342,9 +349,9 @@ filesystem effects. Do not expose private steps just to test them. Examples:
 - [BatchCleanupActionsTest](../tests/Feature/Recovery/BatchCleanupActionsTest.php):
   resource recovery, batch deletion continuing after recovery errors, and
   final current-version protection during reconciliation.
-- [HandlerLifecycleTest](../tests/Feature/Storage/HandlerLifecycleTest.php): captured
+- [HandlerLifecycleTest](../tests/Integration/PublicApi/HandlerLifecycleTest.php): captured
   connection/adapter identity and interleaved stage lifetimes.
-- [ConcurrentPublicationTest](../tests/Feature/Storage/ConcurrentPublicationTest.php):
+- [PublicationTest](../tests/Integration/Concurrency/PublicationTest.php):
   actual simultaneous upload processes and competing publication attempts.
 
 Keep the existing crash, reader-protection, transaction-failure, fork, and real FPM

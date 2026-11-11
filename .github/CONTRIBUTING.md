@@ -38,22 +38,34 @@ composer test
 ```
 
 This runs static analysis, formatting checks, type coverage, and all Pest
-suites. Individual checks are also available:
+suites. The development command reference matches
+[AGENTS.md](../AGENTS.md#quick-commands); commands are defined in
+[composer.json](../composer.json).
 
-```bash
-composer analyse
-composer lint:check
-composer test:types
-composer test:unit
-```
+| Purpose | Command |
+| --- | --- |
+| Full validation | `composer test` |
+| All Pest suites, including architecture | `composer test:all` |
+| Unit suite | `composer test:unit` |
+| Feature suite | `composer test:feature` |
+| Integration suite | `composer test:integration` |
+| Type coverage (100%) | `composer test:types` |
+| Static analysis | `composer analyse` |
+| Check formatting | `composer lint:check` |
+| Apply formatting | `composer lint` |
+| Mutation testing (opt-in; coverage driver required) | `composer test:mutation` |
+| Build Workbench | `composer build` |
+| Serve Workbench | `composer serve` |
 
-Despite its name, `composer test:unit` runs all Pest suites, not only unit
-tests. `composer test:types` disables Pest's shared type-coverage cache to
+`composer test:all` runs every Pest suite, including architecture checks.
+`test:unit`, `test:feature`, and `test:integration` select only their named
+suite; `composer test` still runs every validation check and every suite.
+`composer test:types` disables Pest's shared type-coverage cache to
 avoid corrupted cache files during concurrent analysis; it still enforces
-100% type coverage. To format code, use `composer lint`. For a focused test run:
+100% type coverage. For a focused test run:
 
 ```bash
-vendor/bin/pest tests/Specification/Storage/FileTest.php
+vendor/bin/pest tests/Integration/PublicApi/FileTest.php
 ```
 
 CI validates Ubuntu and macOS across the supported PHP/Laravel versions
@@ -97,10 +109,16 @@ an interface for every class or a directory for each supporting mechanism.
 
 Choose the category that matches the behavior:
 
-- `tests/Unit`: isolated class behavior without booting Laravel.
-- `tests/Feature`: Laravel integration through Orchestra Testbench, including
-  storage, database transactions, commands, and process behavior.
-- `tests/Specification`: acceptance tests defining the public package contract.
+- `tests/Unit`: isolated behavior without booting Laravel or resolving services
+  from its container. Framework value objects and contracts can be used without
+  starting an application.
+- `tests/Feature`: focused Laravel wiring and component interactions through
+  Orchestra Testbench: configuration, adapters, commands, metadata, journals,
+  and lifecycle mechanisms.
+- `tests/Integration`: complete public workflows and actual infrastructure:
+  snapshots, version history, rollback, recovery, concurrent processes, and
+  enforced timeouts. `PublicApi` contains readable consumer specifications;
+  specification is a purpose, not another testing level.
 - `tests/ArchTest.php`: architecture constraints.
 - `tests/Support`: reusable fixtures and subprocess helpers, not a test suite.
 
@@ -108,23 +126,45 @@ Within each suite, tests are grouped by responsibility:
 
 | Suite | Subdirectories |
 | --- | --- |
-| Specification | `Storage` (consumer file/directory examples), `Execution` (runtime and timeout guarantees) |
-| Feature | `Storage`, `Filesystem`, `Drivers`, `Uploads`, `Transactions`, `Recovery`, `Package`, `TestSupport` |
-| Unit | `Filesystem`, `Uploads`, `TestSupport` |
+| Integration | `PublicApi`, `Storage`, `Transactions`, `Concurrency`, `Recovery`, `Execution`, `TestSupport` |
+| Feature | `Database`, `Filesystem`, `Drivers`, `Uploads`, `Recovery`, `Execution`, `Package` |
+| Unit | `Actions`, `Database`, `Filesystem`, `Uploads`, `TestSupport` |
 
 Use the existing group matching the behavior. For example, run all driver
 integration tests with `vendor/bin/pest tests/Feature/Drivers`. Grouping is
 for navigation; tests must remain independent of execution order.
 
 Prefer observable behavior over internal query shapes or incidental call
-counts. Use descriptive test names, explicit scenarios, distinct revision
-contents, and complete expected results. Helpers should simplify setup
-without hiding the behavior being asserted.
+counts, except where a query is the deliberate crash or durability boundary.
+Use descriptive English names, arrange/act/assert spacing, distinct revision
+contents, and complete expected results. Split tests when a boolean changes
+the workflow or its assertions. Small named datasets are useful for inputs
+to the same behavior; do not encode different workflows in a scenario table.
+Prefer named values and time advancement over unexplained offsets or indexes.
+Fixtures may own repetitive infrastructure setup; keep actions and expected
+outcomes visible in the test. Do not build a generic scenario framework.
 
 Ordinary application-backed tests use the synchronous upload helper with
 real metadata and fake disks. See the [README testing section](../README.md#testing-in-laravel-applications).
+Laravel's local fake disk still writes real files in an isolated directory;
+it is not proof of a remote service. Driver Feature tests use real adapters
+with simulated transports, not live S3, FTP, or SFTP servers.
+Testbench supplies the Laravel host for both application-backed suites.
+Workbench is used where actual Artisan/queue/HTTP host behavior is required,
+not as a replacement for every Testbench database test. End-to-end tests
+of a consuming application's own behavior belong in that application.
 Keep real process tests where OS termination, concurrency, or crash recovery
 is the requirement; synchronous execution cannot prove those guarantees.
+Build a broad Unit foundation for individual methods, state transitions,
+failure paths, and independent decision conditions. Feature tests should be
+fewer and prove composition with Laravel and real metadata. Integration tests
+should be fewer again: representative consumer histories and indispensable
+infrastructure guarantees, not every permutation of an already isolated rule.
+When moving a detailed case down, retain a focused wiring proof and map the
+original guarantee to its replacement. Do not duplicate trivial cases to
+inflate counts or replace real database locks, atomicity, process termination,
+or crash recovery with mocks. Independent-condition examples are useful, but
+do not describe them as formal MC/DC without measuring that criterion.
 
 Reuse existing fixtures, bound waits, and clean up owned processes and
 temporary resources in `finally`. Restore any global state you change.

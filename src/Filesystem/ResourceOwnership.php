@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace SkyRaptor\LaravelVersionedStorage\Filesystem;
 
+use Illuminate\Contracts\Config\Repository;
 use Illuminate\Database\Connection;
 use Illuminate\Filesystem\FilesystemAdapter;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Filesystem\FilesystemManager;
 use InvalidArgumentException;
 use RuntimeException;
 use SkyRaptor\LaravelVersionedStorage\ResourceIdentity;
@@ -23,6 +24,8 @@ final class ResourceOwnership
         private readonly Connection $connection,
         private readonly ResourceIdentity $resource,
         private readonly FilesystemAdapter $filesystem,
+        private readonly FilesystemManager $filesystems,
+        private readonly Repository $config,
     ) {}
 
     public function assertRegistrationAllowed(): void
@@ -62,10 +65,10 @@ final class ResourceOwnership
     private function sharesFilesystem(string $disk): bool
     {
         try {
-            return Storage::disk($disk)->getAdapter() === $this->filesystem->getAdapter();
+            return $this->filesystems->disk($disk)->getAdapter() === $this->filesystem->getAdapter();
         } catch (InvalidArgumentException $exception) {
             // Resolve first so aliases registered with Storage::set() still participate.
-            if (! empty(config("filesystems.disks.{$disk}.driver"))
+            if (! empty($this->config->get("filesystems.disks.{$disk}.driver"))
                 || $exception->getMessage() !== "Disk [{$disk}] does not have a configured driver.") {
                 throw $exception;
             }

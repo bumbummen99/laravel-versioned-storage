@@ -62,4 +62,4 @@ jobs:
         run: composer test:types
 
       - name: Test Suite
-        run: composer test:unit
+        run: composer test:all
